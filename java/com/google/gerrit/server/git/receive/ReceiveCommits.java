@@ -117,8 +117,10 @@ import com.google.gerrit.server.ExceptionHook;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.InvalidDeadlineException;
 import com.google.gerrit.server.PatchSetUtil;
+import com.google.gerrit.server.PluginPushOption;
 import com.google.gerrit.server.PublishCommentUtil;
 import com.google.gerrit.server.PublishCommentsOp;
+import com.google.gerrit.server.RequestCounter;
 import com.google.gerrit.server.RequestInfo;
 import com.google.gerrit.server.RequestListener;
 import com.google.gerrit.server.Sequences;
@@ -152,6 +154,7 @@ import com.google.gerrit.server.git.ValidationError;
 import com.google.gerrit.server.git.receive.RejectionReason.MetricBucket;
 import com.google.gerrit.server.git.validators.CommentCountValidator;
 import com.google.gerrit.server.git.validators.CommentSizeValidator;
+import com.google.gerrit.server.git.validators.CommitValidationInfo;
 import com.google.gerrit.server.git.validators.CommitValidationMessage;
 import com.google.gerrit.server.git.validators.RefOperationValidationException;
 import com.google.gerrit.server.git.validators.RefOperationValidators;
@@ -162,6 +165,7 @@ import com.google.gerrit.server.logging.PerformanceLogContext;
 import com.google.gerrit.server.logging.PerformanceLogger;
 import com.google.gerrit.server.logging.RequestId;
 import com.google.gerrit.server.logging.TraceContext;
+import com.google.gerrit.server.logging.TraceContext.TraceIdConsumer;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.mail.MailUtil.MailRecipients;
 import com.google.gerrit.server.notedb.ChangeNotes;
@@ -289,7 +293,9 @@ class ReceiveCommits {
         ReceivePack receivePack,
         Repository repository,
         AllRefsWatcher allRefsWatcher,
-        MessageSender messageSender);
+        @Nullable TraceIdConsumer traceIdConsumer,
+        @Nullable MessageSender messageSender,
+        @Nullable RequestCounter requestCounter);
   }
 
   private class ReceivePackMessageSender implements MessageSender {
@@ -431,6 +437,7 @@ class ReceiveCommits {
   private final SetHashtagsOp.Factory hashtagsFactory;
   private final SetTopicOp.Factory setTopicFactory;
   private final ServiceUserClassifier serviceUserClassifier;
+  private final RequestCounter requestCounter;
   private final ImmutableList<SubmissionListener> superprojectUpdateSubmissionListeners;
   private final TagCache tagCache;
   private final ProjectConfig.Factory projectConfigFactory;
@@ -454,6 +461,10 @@ class ReceiveCommits {
   // Collections populated during processing.
   private final Queue<ValidationMessage> messages;
 
+  // Map that maps a commit SHA1 to its validation results (map that maps a validator name to its
+  // result).
+  private final Map<String, ImmutableMap<String, CommitValidationInfo>> validationInfosByCommit;
+
   /** Multimap of error text to refnames that produced that error. */
   private final ListMultimap<String, String> errors;
 
@@ -468,11 +479,12 @@ class ReceiveCommits {
   private boolean newChangeForAllNotInTarget;
   private boolean setChangeAsPrivate;
   private Optional<NoteDbPushOption> noteDbPushOption;
-  private Optional<String> tracePushOption;
+  private Optional<String> tracePushOption = Optional.empty();
 
+  private final TraceIdConsumer traceIdConsumer;
   private MessageSender messageSender;
   private ReceiveCommitsResult.Builder result;
-  private ImmutableMap<String, String> loggingTags;
+  private ImmutableSetMultimap<String, String> loggingTags;
   private ImmutableList<String> transitionalPluginOptions;
 
   /** This object is for single use only. */
@@ -537,7 +549,9 @@ class ReceiveCommits {
       @Assisted ReceivePack rp,
       @Assisted Repository repository,
       @Assisted AllRefsWatcher allRefsWatcher,
-      @Nullable @Assisted MessageSender messageSender)
+      @Assisted @Nullable TraceIdConsumer traceIdConsumer,
+      @Assisted @Nullable MessageSender messageSender,
+      @Assisted @Nullable RequestCounter requestCounter)
       throws IOException {
     // Injected fields.
     this.accountResolver = accountResolver;
@@ -581,6 +595,7 @@ class ReceiveCommits {
     this.receiveConfig = receiveConfig;
     this.refValidatorsFactory = refValidatorsFactory;
     this.replaceOpFactory = replaceOpFactory;
+    this.requestCounter = requestCounter;
     this.requestListeners = requestListeners;
     this.retryHelper = retryHelper;
     this.requestScopePropagator = requestScopePropagator;
@@ -607,6 +622,8 @@ class ReceiveCommits {
     rejectCommits = BanCommit.loadRejectCommitsMap(repo, rp.getRevWalk());
 
     // Collections populated during processing.
+    validationInfosByCommit = new LinkedHashMap<>();
+
     errors = MultimapBuilder.linkedHashKeys().arrayListValues().build();
     rejectionReasons = new LinkedHashMap<>();
     messages = new ConcurrentLinkedQueue<>();
@@ -623,9 +640,10 @@ class ReceiveCommits {
         projectState.is(BooleanProjectConfig.CREATE_NEW_CHANGE_FOR_ALL_NOT_IN_TARGET);
 
     // Handles for outputting back over the wire to the end user.
+    this.traceIdConsumer = traceIdConsumer;
     this.messageSender = messageSender != null ? messageSender : new ReceivePackMessageSender();
     this.result = ReceiveCommitsResult.builder();
-    this.loggingTags = ImmutableMap.of();
+    this.loggingTags = ImmutableSetMultimap.of();
 
     // TODO(hiesel): Make this decision implicit once vetted
     boolean useRefCache = config.getBoolean("receive", "enableInMemoryRefCache", true);
@@ -674,8 +692,8 @@ class ReceiveCommits {
   void sendMessages() {
     try (TraceContext traceContext =
         TraceContext.newTrace(
-            loggingTags.containsKey(RequestId.Type.TRACE_ID.name()),
-            loggingTags.get(RequestId.Type.TRACE_ID.name()),
+            tracePushOption.isPresent(),
+            Iterables.getFirst(loggingTags.get(RequestId.Type.TRACE_ID.name()), null),
             (tagName, traceId) -> {})) {
       loggingTags.forEach((tagName, tagValue) -> traceContext.addTag(tagName, tagValue));
 
@@ -701,13 +719,21 @@ class ReceiveCommits {
             TraceContext.newTrace(
                 tracePushOption.isPresent(),
                 tracePushOption.orElse(null),
-                (tagName, traceId) -> addMessage(tagName + ": " + traceId));
+                (tagName, traceId) -> {
+                  if (tracePushOption.isPresent()) {
+                    addMessage(tagName + ": " + traceId);
+                  }
+                  if (traceIdConsumer != null) {
+                    traceIdConsumer.accept(RequestId.Type.TRACE_ID.name(), traceId);
+                  }
+                });
         PerformanceLogContext performanceLogContext =
             new PerformanceLogContext(config, performanceLoggers);
         TraceTimer traceTimer =
             newTimer("processCommands", Metadata.builder().resourceCount(commandCount))) {
       RequestInfo requestInfo =
-          RequestInfo.builder(RequestInfo.RequestType.GIT_RECEIVE, user, traceContext)
+          RequestInfo.builder(
+                  RequestInfo.RequestType.GIT_RECEIVE, "git-receive-pack", user, traceContext)
               .project(project.getNameKey())
               .build();
       requestListeners.runEach(l -> l.onRequest(requestInfo));
@@ -723,6 +749,7 @@ class ReceiveCommits {
       commands =
           commands.stream().map(c -> wrapReceiveCommand(c, commandProgress)).collect(toList());
 
+      Throwable error = null;
       try (RequestStateContext requestStateContext =
           RequestStateContext.open()
               .addRequestStateProvider(progress)
@@ -733,9 +760,11 @@ class ReceiveCommits {
             commands,
             RejectionReason.create(MetricBucket.INTERNAL_SERVER_ERROR, INTERNAL_SERVER_ERROR));
       } catch (InvalidDeadlineException e) {
+        error = e;
         rejectRemaining(
             commands, RejectionReason.create(MetricBucket.INVALID_DEADLINE, e.getMessage()));
       } catch (RuntimeException e) {
+        error = e;
         Optional<RequestCancelledException> requestCancelledException =
             RequestCancelledException.getFromCausalChain(e);
         if (!requestCancelledException.isPresent()) {
@@ -751,20 +780,19 @@ class ReceiveCommits {
                   " (%s)", requestCancelledException.get().getCancellationMessage().get()));
         }
 
-        MetricBucket metricBucket = MetricBucket.INTERNAL_SERVER_ERROR;
-        switch (requestCancelledException.get().getCancellationReason()) {
-          case CLIENT_CLOSED_REQUEST:
-            metricBucket = MetricBucket.CLIENT_CLOSED_REQUEST;
-            break;
-          case CLIENT_PROVIDED_DEADLINE_EXCEEDED:
-            metricBucket = MetricBucket.CLIENT_PROVIDED_DEADLINE_EXCEEDED;
-            break;
-          case SERVER_DEADLINE_EXCEEDED:
-            metricBucket = MetricBucket.SERVER_DEADLINE_EXCEEDED;
-            break;
-        }
+        MetricBucket metricBucket =
+            switch (requestCancelledException.get().getCancellationReason()) {
+              case CLIENT_CLOSED_REQUEST -> MetricBucket.CLIENT_CLOSED_REQUEST;
+              case CLIENT_PROVIDED_DEADLINE_EXCEEDED ->
+                  MetricBucket.CLIENT_PROVIDED_DEADLINE_EXCEEDED;
+              case SERVER_DEADLINE_EXCEEDED -> MetricBucket.SERVER_DEADLINE_EXCEEDED;
+            };
 
         rejectRemaining(commands, RejectionReason.create(metricBucket, msg.toString()));
+      } finally {
+        if (requestCounter != null) {
+          requestCounter.countRequest(requestInfo, error);
+        }
       }
 
       // This sends error messages before the 'done' string of the progress monitor is sent.
@@ -1007,19 +1035,15 @@ class ReceiveCommits {
                 // that should happen in this loops are things that can't happen within one
                 // BatchUpdate because they involve kicking off an additional BatchUpdate.
                 switch (c.getType()) {
-                  case CREATE:
-                  case UPDATE:
-                  case UPDATE_NONFASTFORWARD:
+                  case CREATE, UPDATE, UPDATE_NONFASTFORWARD -> {
                     Task closeProgress = progress.beginSubTask("closed", UNKNOWN);
                     try (RefUpdateContext ctx =
                         RefUpdateContext.open(RefUpdateType.AUTO_CLOSE_CHANGES)) {
                       autoCloseChanges(globalRevWalk, ins, c, closeProgress);
                     }
                     closeProgress.end();
-                    break;
-
-                  case DELETE:
-                    break;
+                  }
+                  case DELETE -> {}
                 }
               });
     }
@@ -1356,8 +1380,6 @@ class ReceiveCommits {
     List<String> traceValues = pushOptions.get("trace");
     if (!traceValues.isEmpty()) {
       tracePushOption = Optional.of(Iterables.getLast(traceValues));
-    } else {
-      tracePushOption = Optional.empty();
     }
   }
 
@@ -1438,29 +1460,18 @@ class ReceiveCommits {
       }
 
       switch (cmd.getType()) {
-        case CREATE:
-          parseCreate(globalRevWalk, ins, cmd);
-          break;
-
-        case UPDATE:
-          parseUpdate(globalRevWalk, ins, cmd);
-          break;
-
-        case DELETE:
-          parseDelete(cmd);
-          break;
-
-        case UPDATE_NONFASTFORWARD:
-          parseRewind(globalRevWalk, ins, cmd);
-          break;
-
-        default:
+        case CREATE -> parseCreate(globalRevWalk, ins, cmd);
+        case UPDATE -> parseUpdate(globalRevWalk, ins, cmd);
+        case DELETE -> parseDelete(cmd);
+        case UPDATE_NONFASTFORWARD -> parseRewind(globalRevWalk, ins, cmd);
+        default -> {
           reject(
               cmd,
               RejectionReason.create(
                   MetricBucket.UNKNOWN_COMMAND_TYPE,
                   "prohibited by Gerrit: unknown command type " + cmd.getType()));
           return;
+        }
       }
 
       if (cmd.getResult() != NOT_ATTEMPTED) {
@@ -1490,9 +1501,7 @@ class ReceiveCommits {
       }
 
       switch (cmd.getType()) {
-        case CREATE:
-        case UPDATE:
-        case UPDATE_NONFASTFORWARD:
+        case CREATE, UPDATE, UPDATE_NONFASTFORWARD -> {
           try {
             ProjectConfig cfg = projectConfigFactory.create(project.getNameKey());
             cfg.load(project.getNameKey(), globalRevWalk, cmd.getNewId());
@@ -1570,18 +1579,15 @@ class ReceiveCommits {
                 user.getLoggableName(), cmd.getNewId().name(), project.getName());
             return;
           }
-          break;
-
-        case DELETE:
-          break;
-
-        default:
-          reject(
-              cmd,
-              RejectionReason.create(
-                  MetricBucket.UNKNOWN_COMMAND_TYPE,
-                  "prohibited by Gerrit: don't know how to handle config update of type "
-                      + cmd.getType()));
+        }
+        case DELETE -> {}
+        default ->
+            reject(
+                cmd,
+                RejectionReason.create(
+                    MetricBucket.UNKNOWN_COMMAND_TYPE,
+                    "prohibited by Gerrit: don't know how to handle config update of type "
+                        + cmd.getType()));
       }
     }
   }
@@ -2567,7 +2573,7 @@ class ReceiveCommits {
       BranchCommitValidator validator =
           commitValidatorFactory.create(projectState, magicBranch.dest, user);
 
-      try {
+      try (RepoView repoView = new RepoView(repo, globalRevWalk, ins)) {
         RevCommit start = setUpWalkForSelectingChanges(globalRevWalk);
         if (start == null) {
           return ImmutableList.of();
@@ -2655,18 +2661,22 @@ class ReceiveCommits {
                 "Creating new change for %s even though it is already tracked", name);
           }
 
+          // Validate the received commits. Do not invoke the CommitValidationInfoListener's yet
+          // because we create changes/patch-sets for the commits only later and we need to provide
+          // the patch set ID, that we don't know yet, to CommitValidationInfoListener's.
           BranchCommitValidator.Result validationResult =
               validator.validateCommit(
                   repo,
                   globalRevWalk.getObjectReader(),
-                  diffOperationsForCommitValidationFactory.create(
-                      new RepoView(repo, globalRevWalk, ins), ins),
+                  diffOperationsForCommitValidationFactory.create(repoView, ins),
                   magicBranch.cmd,
                   c,
                   ImmutableListMultimap.copyOf(pushOptions),
                   magicBranch.merged,
                   rejectCommits,
-                  null);
+                  /* invokeCommitValidationInfoListeners= */ false,
+                  /* change= */ null);
+          validationInfosByCommit.put(c.name(), validationResult.validationInfos());
           messages.addAll(validationResult.messages());
           if (!validationResult.isValid()) {
             // Not a change the user can propose? Abort as early as possible.
@@ -3019,8 +3029,10 @@ class ReceiveCommits {
                 .setTopic(magicBranch.topic)
                 .setPrivate(setChangeAsPrivate)
                 .setWorkInProgress(magicBranch.shouldSetWorkInProgressOnNewChanges())
-                // Changes already validated in validateNewCommits.
-                .setValidate(false);
+                // The commit has already been validated in
+                // selectNewAndReplacedChangesFromMagicBranch.
+                .setValidationOptions(ImmutableListMultimap.copyOf(pushOptions))
+                .disableValidation(validationInfosByCommit.get(commit.name()));
 
         if (magicBranch.merged) {
           ins.setStatus(Change.Status.MERGED);
@@ -3564,6 +3576,10 @@ class ReceiveCommits {
                 priorCommit,
                 psId,
                 newCommit,
+                // The commit has already been validated in
+                // selectNewAndReplacedChangesFromMagicBranch.
+                ImmutableListMultimap.copyOf(pushOptions),
+                validationInfosByCommit.get(newCommit.name()),
                 info,
                 groups,
                 magicBranch,
@@ -3741,7 +3757,7 @@ class ReceiveCommits {
       BranchCommitValidator validator = commitValidatorFactory.create(projectState, branch, user);
       globalRevWalk.reset();
       globalRevWalk.sort(RevSort.NONE);
-      try {
+      try (RepoView repoView = new RepoView(repo, globalRevWalk, ins)) {
         RevObject parsedObject = globalRevWalk.parseAny(cmd.getNewId());
         if (!(parsedObject instanceof RevCommit)) {
           return;
@@ -3773,14 +3789,14 @@ class ReceiveCommits {
               validator.validateCommit(
                   repo,
                   globalRevWalk.getObjectReader(),
-                  diffOperationsForCommitValidationFactory.create(
-                      new RepoView(repo, globalRevWalk, ins), ins),
+                  diffOperationsForCommitValidationFactory.create(repoView, ins),
                   cmd,
                   c,
                   ImmutableListMultimap.copyOf(pushOptions),
-                  false,
+                  /* isMerged= */ false,
                   rejectCommits,
-                  null,
+                  /* invokeCommitValidationInfoListeners= */ true,
+                  /* change= */ null,
                   skipValidation);
           messages.addAll(validationResult.messages());
           if (!validationResult.isValid()) {

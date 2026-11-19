@@ -313,7 +313,7 @@ export class GrMainHeader extends LitElement {
 
         .linksTitle {
           display: inline-block;
-          font-weight: var(--font-weight-bold);
+          font-weight: var(--font-weight-medium);
           position: relative;
           text-transform: uppercase;
         }
@@ -344,7 +344,7 @@ export class GrMainHeader extends LitElement {
 
         .rightItems gr-endpoint-decorator:not(:empty),
         .mobileRightItems gr-endpoint-decorator:not(:empty) {
-          margin-left: var(--spacing-l);
+          margin-left: var(--spacing-s);
         }
         gr-smart-search {
           flex-grow: 1;

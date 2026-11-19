@@ -3,7 +3,7 @@
  * Copyright 2015 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {safeStyleSheet, safeStyleEl} from '../../utils/inner-html-util';
+import {safeStyleSheet, setStyleTextContent} from '../../utils/inner-html-util';
 
 // TODO: Replace `html` with `html.darkTheme`. But before we can do that we have
 // to ensure that all plugins also use `.darkTheme`, otherwise we would trump
@@ -132,6 +132,7 @@ const darkThemeCss = safeStyleSheet`
     --disabled-button-background-color: #484a4d;
     --selection-background-color: rgba(161, 194, 250, 0.1);
     --tooltip-background-color: var(--gray-200);
+    --section-header-background-color: var(--blue-tonal);
 
     /* comment background colors */
     --comment-background-color: #3c3f43;
@@ -176,15 +177,15 @@ const darkThemeCss = safeStyleSheet`
     --tag-brown: var(--brown-tonal);
 
     /* status colors */
-    --status-merged: var(--green-400);
+    --status-merged: #a4a4a4;
     --status-abandoned: var(--gray-300);
     --status-wip: #bcaaa4;
     --status-private: var(--purple-200);
     --status-conflict: var(--red-300);
     --status-revert: var(--gray-200);
     --status-revert-created: #ff8a65;
-    --status-active: var(--blue-400);
-    --status-ready: var(--pink-500);
+    --status-active: #f4ce5d;
+    --status-ready: #55c374;
     --status-custom: var(--purple-400);
 
     /* file status colors */
@@ -196,7 +197,6 @@ const darkThemeCss = safeStyleSheet`
     --file-status-reverted: var(--gray-500);
 
     /* fonts */
-    --font-weight-bold: 700; /* 700 is the same as 'bold' */
 
     /* spacing */
 
@@ -295,7 +295,7 @@ export function applyTheme() {
   if (document.head.querySelector('#dark-theme')) return;
   const styleEl = document.createElement('style');
   styleEl.setAttribute('id', 'dark-theme');
-  safeStyleEl.setTextContent(styleEl, darkThemeCss);
+  setStyleTextContent(styleEl, darkThemeCss);
 
   // We would like to insert the dark theme styles after the light theme such
   // that the dark theme values override the defaults in the light theme. But

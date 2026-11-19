@@ -8,6 +8,7 @@ import '../../../test/common-test-setup';
 import './gr-comment-thread';
 import {sortComments} from '../../../utils/comment-util';
 import {GrCommentThread} from './gr-comment-thread';
+import {getAppContext} from '../../../services/app-context';
 import {
   NumericChangeId,
   UrlEncodedCommentId,
@@ -16,18 +17,24 @@ import {
   RepoName,
   DraftInfo,
   SavingState,
+  CommentThread,
+  RevisionPatchSetNum,
 } from '../../../types/common';
 import {
   mockPromise,
   queryAndAssert,
   stubRestApi,
   waitUntilCalled,
+  waitUntil,
   MockPromise,
+  query,
 } from '../../../test/test-utils';
 import {
   createAccountDetailWithId,
   createThread,
   createNewDraft,
+  createComment,
+  createFixSuggestionInfo,
 } from '../../../test/test-data-generators';
 import {SinonStubbedMember} from 'sinon';
 import {fixture, html, assert} from '@open-wc/testing';
@@ -44,6 +51,10 @@ import {
   changeViewModelToken,
 } from '../../../models/views/change';
 import {GerritView} from '../../../services/router/router-model';
+import {GrComment} from '../gr-comment/gr-comment';
+import {GrSuggestionTextarea} from '../gr-suggestion-textarea/gr-suggestion-textarea';
+import {KnownExperimentId} from '../../../services/flags/flags';
+import {suggestionsServiceToken} from '../../../services/suggestions/suggestions-service';
 
 const c1: CommentInfo = {
   author: {name: 'Kermit'},
@@ -376,10 +387,120 @@ suite('gr-comment-thread tests', () => {
     });
 
     test('handle Quote', async () => {
+      // Use @ts-ignore to bypass TypeScript's private method restriction
+      // @ts-ignore
+      const addQuoteStub = sinon.stub(element, 'addQuote');
+      await element.updateComplete;
       assert.equal(element.thread?.comments.length, 2);
       queryAndAssert<GrButton>(element, '#quoteBtn').click();
       assert.isTrue(stubAdd.called);
-      assert.equal(stubAdd.lastCall.firstArg.message.trim(), `> ${c2.message}`);
+      assert.equal(stubAdd.lastCall.firstArg.message, '');
+      assert.isTrue(addQuoteStub.calledWith('> keep it going\n\n'));
+    });
+
+    test('cancel after reply discards the comment', async () => {
+      element.thread = createThread(c1, {...c2, unresolved: true});
+      await element.updateComplete;
+
+      // Restore the original stub before creating a new one
+      stubAdd.restore();
+
+      // Create a stub that actually adds a draft to the thread
+      stubAdd = sinon
+        .stub(testResolver(commentsModelToken), 'addNewDraft')
+        .callsFake(draft => {
+          const newDraft = {
+            ...draft,
+            id: 'new-draft' as UrlEncodedCommentId,
+            __draft: true,
+          };
+          if (element.thread) {
+            element.thread = {
+              ...element.thread,
+              comments: [...element.thread.comments, newDraft],
+            };
+          }
+          return Promise.resolve(newDraft);
+        });
+
+      // Click reply button to create a new draft
+      queryAndAssert<GrButton>(element, '#replyBtn').click();
+      assert.isTrue(stubAdd.called);
+      await element.updateComplete;
+      const draftElement = queryAndAssert<GrComment>(
+        element,
+        'gr-comment.draft'
+      );
+
+      // Simulate user adding additional text to the quoted text
+      draftElement.editing = true;
+      draftElement.messageText = 'My comment text';
+      await draftElement.updateComplete;
+
+      // Simulate cancel action
+      const cancelSpy = sinon.spy(draftElement, 'cancel');
+      draftElement.cancel();
+      assert.isTrue(cancelSpy.called);
+      // The draft should be discarded completely
+      assert.equal(draftElement.messageText, '');
+    });
+
+    test('cancel after quote only discards user input but keeps quoted text', async () => {
+      element.thread = createThread(c1, {...c2, unresolved: true});
+      await element.updateComplete;
+
+      // Restore the original stub before creating a new one
+      stubAdd.restore();
+
+      // Create a stub that actually adds a draft to the thread with the quoted text
+      stubAdd = sinon
+        .stub(testResolver(commentsModelToken), 'addNewDraft')
+        .callsFake(draft => {
+          const newDraft = {
+            ...draft,
+            id: 'new-draft' as UrlEncodedCommentId,
+            __draft: true,
+          };
+          if (element.thread) {
+            element.thread = {
+              ...element.thread,
+              comments: [...element.thread.comments, newDraft],
+            };
+          }
+          return Promise.resolve(newDraft);
+        });
+
+      // Click quote button to create a new draft with quoted text
+      queryAndAssert<GrButton>(element, '#quoteBtn').click();
+      assert.isTrue(stubAdd.called);
+      await element.updateComplete;
+
+      const draftElement = queryAndAssert<GrComment>(
+        element,
+        'gr-comment.draft'
+      );
+      await draftElement.updateComplete;
+      await waitUntil(
+        () => !!draftElement.textarea,
+        'textarea element not found'
+      );
+      const textarea = queryAndAssert<GrSuggestionTextarea>(
+        draftElement,
+        '#editTextarea'
+      );
+      await textarea.updateComplete;
+
+      // Verify the draft contains the quoted text
+      assert.equal(draftElement.messageText, '> keep it going\n\n');
+
+      // Simulate cancel action
+      const cancelSpy = sinon.spy(draftElement, 'cancel');
+      draftElement.cancel();
+      await draftElement.updateComplete;
+      assert.isTrue(cancelSpy.called);
+
+      // The draft should be discarded completely
+      assert.equal(draftElement.messageText, '');
     });
   });
 
@@ -486,5 +607,146 @@ suite('gr-comment-thread tests', () => {
       clipboardStub.firstCall.args[0],
       'http://localhost:9876/c/test-repo-name/+/1/comment/the-root/'
     );
+  });
+
+  suite('Get AI fix button', () => {
+    setup(async () => {
+      const flagsService = getAppContext().flagsService;
+      sinon
+        .stub(flagsService, 'isEnabled')
+        .callsFake(id => id === KnownExperimentId.GET_AI_FIX);
+
+      const suggestionsService = testResolver(suggestionsServiceToken);
+      sinon
+        .stub(suggestionsService, 'isGeneratedSuggestedFixEnabled')
+        .returns(true);
+
+      element.isOwner = true;
+      element.account = createAccountDetailWithId(13);
+      element.thread = createThread({...c1, unresolved: true});
+      await element.updateComplete;
+    });
+    test('renders with actions unresolved and AI fix button', async () => {
+      assert.isOk(query(element, '#aiFixBtn'));
+      assert.dom.equal(
+        queryAndAssert(element, '#container'),
+        /* HTML */ `
+          <div id="container">
+            <h3 class="assistive-tech-only">
+              Unresolved Comment thread by Kermit
+            </h3>
+            <div class="comment-box unresolved" tabindex="0">
+              <gr-comment show-patchset=""></gr-comment>
+              <div id="actionsContainer">
+                <span id="unresolvedLabel"> Unresolved </span>
+                <div id="actions">
+                  <gr-button
+                    aria-disabled="false"
+                    class="action reply"
+                    id="replyBtn"
+                    link=""
+                    role="button"
+                    tabindex="0"
+                  >
+                    Reply
+                  </gr-button>
+                  <gr-button
+                    aria-disabled="false"
+                    class="action quote"
+                    id="quoteBtn"
+                    link=""
+                    role="button"
+                    tabindex="0"
+                  >
+                    Quote
+                  </gr-button>
+                  <gr-button
+                    aria-disabled="false"
+                    class="action ack"
+                    id="ackBtn"
+                    link=""
+                    role="button"
+                    tabindex="0"
+                  >
+                    Ack
+                  </gr-button>
+                  <gr-button
+                    aria-disabled="false"
+                    class="action done"
+                    id="doneBtn"
+                    link=""
+                    role="button"
+                    tabindex="0"
+                  >
+                    Done
+                  </gr-button>
+                  <gr-button
+                    aria-disabled="false"
+                    class="action ai-fix"
+                    id="aiFixBtn"
+                    link=""
+                    role="button"
+                    tabindex="0"
+                  >
+                    Get AI Fix
+                  </gr-button>
+                  <gr-icon
+                    icon="link"
+                    class="copy link-icon"
+                    role="button"
+                    tabindex="0"
+                    title="Copy link to this comment"
+                  ></gr-icon>
+                </div>
+              </div>
+            </div>
+          </div>
+        `
+      );
+    });
+
+    test('not show get ai fix if comment has fix_suggestion', async () => {
+      element.thread = createThread({
+        ...c1,
+        fix_suggestions: [createFixSuggestionInfo()],
+        unresolved: true,
+      });
+      await element.updateComplete;
+      assert.isNotOk(query(element, '#aiFixBtn'));
+    });
+
+    test('handleAppliedFix creates a "Fix applied" reply', async () => {
+      const thread: CommentThread = {
+        ...createThread(c1),
+        comments: [
+          {
+            ...createComment(),
+            id: '123' as any,
+            message: 'Test comment',
+            author: {name: 'Test User'},
+            patch_set: 1 as RevisionPatchSetNum,
+            line: 10,
+            path: 'test.txt',
+          },
+        ],
+      };
+      element.thread = thread;
+      element.changeNum = 123 as NumericChangeId;
+      const createReplyCommentSpy = sinon.spy(
+        element as any,
+        'createReplyComment'
+      );
+
+      element.dispatchEvent(new CustomEvent('apply-user-suggestion'));
+
+      assert.isTrue(createReplyCommentSpy.calledOnce);
+      assert.deepEqual(createReplyCommentSpy.firstCall.args, [
+        'Fix applied.',
+        false,
+        false,
+        '',
+        undefined,
+      ]);
+    });
   });
 });

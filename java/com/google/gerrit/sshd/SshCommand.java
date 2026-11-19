@@ -27,6 +27,7 @@ import com.google.gerrit.server.cache.PerThreadCache;
 import com.google.gerrit.server.cancellation.RequestCancelledException;
 import com.google.gerrit.server.cancellation.RequestStateContext;
 import com.google.gerrit.server.config.GerritServerConfig;
+import com.google.gerrit.server.ioutil.HexFormat;
 import com.google.gerrit.server.logging.PerformanceLogContext;
 import com.google.gerrit.server.logging.PerformanceLogger;
 import com.google.gerrit.server.logging.TraceContext;
@@ -46,6 +47,7 @@ public abstract class SshCommand extends BaseCommand {
   @Inject @GerritServerConfig private Config config;
   @Inject private DeadlineChecker.Factory deadlineCheckerFactory;
   @Inject private CancellationMetrics cancellationMetrics;
+  @Inject private SshMetrics sshMetrics;
 
   @Option(name = "--trace", usage = "enable request tracing")
   private boolean trace;
@@ -53,7 +55,7 @@ public abstract class SshCommand extends BaseCommand {
   @Option(name = "--trace-id", usage = "trace ID (can only be set if --trace was set too)")
   private String traceId;
 
-  @Option(name = "--deadline", usage = "deadline after which the request should be aborted)")
+  @Option(name = "--deadline", usage = "deadline after which the request should be aborted")
   private String deadline;
 
   protected PrintWriter stdout;
@@ -61,6 +63,7 @@ public abstract class SshCommand extends BaseCommand {
 
   @Override
   public void start(ChannelSession channel, Environment env) throws IOException {
+    String sessionId = HexFormat.fromInt(getSession().getSessionId());
     startThread(
         () -> {
           try (PerThreadCache ignored = PerThreadCache.create();
@@ -71,8 +74,11 @@ public abstract class SshCommand extends BaseCommand {
             try (TraceContext traceContext = enableTracing();
                 PerformanceLogContext performanceLogContext =
                     new PerformanceLogContext(config, performanceLoggers)) {
+              traceContext.addTag("SSH_SESSION", sessionId);
               RequestInfo requestInfo =
-                  RequestInfo.builder(RequestInfo.RequestType.SSH, user, traceContext).build();
+                  RequestInfo.builder(RequestInfo.RequestType.SSH, getName(), user, traceContext)
+                      .build();
+              Throwable error = null;
               try (RequestStateContext requestStateContext =
                   RequestStateContext.open()
                       .addRequestStateProvider(
@@ -80,8 +86,10 @@ public abstract class SshCommand extends BaseCommand {
                 requestListeners.runEach(l -> l.onRequest(requestInfo));
                 SshCommand.this.run();
               } catch (InvalidDeadlineException e) {
+                error = e;
                 stderr.println(e.getMessage());
               } catch (RuntimeException e) {
+                error = e;
                 Optional<RequestCancelledException> requestCancelledException =
                     RequestCancelledException.getFromCausalChain(e);
                 if (!requestCancelledException.isPresent()) {
@@ -97,6 +105,8 @@ public abstract class SshCommand extends BaseCommand {
                           " (%s)", requestCancelledException.get().getCancellationMessage().get()));
                 }
                 stderr.println(msg.toString());
+              } finally {
+                sshMetrics.countRequest(requestInfo, error);
               }
             } finally {
               stdout.flush();
@@ -116,6 +126,12 @@ public abstract class SshCommand extends BaseCommand {
     return TraceContext.newTrace(
         trace,
         traceId,
-        (tagName, traceId) -> stderr.println(String.format("%s: %s", tagName, traceId)));
+        (tagName, traceId) -> {
+          if (trace) {
+            stderr.println(String.format("%s: %s", tagName, traceId));
+          }
+          setForceTracing(trace);
+          setTraceId(traceId);
+        });
   }
 }

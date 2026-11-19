@@ -59,7 +59,6 @@ import {
   MergeableInfo,
   NameToProjectInfoMap,
   NumericChangeId,
-  ParsedJSON,
   Password,
   PatchRange,
   PatchSetNum,
@@ -81,6 +80,7 @@ import {
   RevisionId,
   RobotCommentInfo,
   ServerInfo,
+  ValidationOptionsInfo,
   SshKeyInfo,
   SubmittedTogetherInfo,
   SuggestedReviewerInfo,
@@ -112,7 +112,10 @@ export interface GetDiffRobotCommentsOutput {
 }
 
 export interface RestApiService extends Finalizable {
-  getConfig(noCache?: boolean): Promise<ServerInfo | undefined>;
+  getConfig(
+    noCache?: boolean,
+    requestOrigin?: string
+  ): Promise<ServerInfo | undefined>;
   getLoggedIn(): Promise<boolean>;
   getPreferences(): Promise<PreferencesInfo | undefined>;
 
@@ -122,8 +125,8 @@ export interface RestApiService extends Finalizable {
    */
   getAccountState(): Promise<AccountStateInfo | undefined>;
 
-  getVersion(): Promise<string | undefined>;
-  getAccount(): Promise<AccountDetailInfo | undefined>;
+  getVersion(requestOrigin?: string): Promise<string | undefined>;
+  getAccount(requestOrigin?: string): Promise<AccountDetailInfo | undefined>;
   getAccountCapabilities(
     params?: string[]
   ): Promise<AccountCapabilityInfo | undefined>;
@@ -134,17 +137,9 @@ export interface RestApiService extends Finalizable {
     filter: string | undefined,
     reposPerPage: number,
     offset?: number,
-    errFn?: ErrorCallback
+    errFn?: ErrorCallback,
+    requestOrigin?: string
   ): Promise<ProjectInfoWithName[] | undefined>;
-
-  send(
-    method: HttpMethod,
-    url: string,
-    body?: RequestPayload,
-    errFn?: null | undefined,
-    contentType?: string,
-    headers?: Record<string, string>
-  ): Promise<Response>;
 
   send(
     method: HttpMethod,
@@ -152,15 +147,8 @@ export interface RestApiService extends Finalizable {
     body?: RequestPayload,
     errFn?: ErrorCallback,
     contentType?: string,
-    headers?: Record<string, string>
+    requestOrigin?: string
   ): Promise<Response | void>;
-
-  /**
-   * DEPRECATED: Use functions from gr-rest-api-helper directly.
-   *
-   * Preserved for plugins that use it.
-   */
-  getResponseObject(response: Response): Promise<ParsedJSON>;
 
   getChangeSuggestedReviewers(
     changeNum: NumericChangeId,
@@ -224,7 +212,8 @@ export interface RestApiService extends Finalizable {
    */
   getChange(
     changeNum: ChangeId | NumericChangeId,
-    errFn?: ErrorCallback
+    errFn?: ErrorCallback,
+    optionsHex?: string
   ): Promise<ChangeInfo | undefined>;
 
   savePreferences(
@@ -491,7 +480,8 @@ export interface RestApiService extends Finalizable {
   ): Promise<{[pluginName: string]: PluginInfo} | undefined>;
 
   getDetailedChangesWithActions(
-    changeNums: NumericChangeId[]
+    changeNums: NumericChangeId[],
+    needsSubmitRequirements?: boolean
   ): Promise<ChangeInfo[] | undefined>;
 
   getChanges(
@@ -740,7 +730,8 @@ export interface RestApiService extends Finalizable {
     changeNum: NumericChangeId,
     fixPatchNum: PatchSetNum,
     fixReplacementInfos: FixReplacementInfo[],
-    targetPatchNum?: PatchSetNum
+    targetPatchNum?: PatchSetNum,
+    errFn?: ErrorCallback
   ): Promise<Response>;
 
   /**
@@ -885,4 +876,8 @@ export interface RestApiService extends Finalizable {
     changeNum: NumericChangeId,
     patchNum: PatchSetNum
   ): Promise<CommitInfo | undefined>;
+
+  getValidationOptions(
+    changeNum: NumericChangeId
+  ): Promise<ValidationOptionsInfo | undefined>;
 }

@@ -27,13 +27,13 @@ import {
   DiffContextExpandedEventDetail,
   GrDiffCommentThread,
 } from '../gr-diff/gr-diff-utils';
-import {BlameInfo, CommentRange, ImageInfo} from '../../../types/common';
+import {BlameInfo, ImageInfo} from '../../../types/common';
 import {DiffInfo, DiffPreferencesInfo} from '../../../types/diff';
 import {GrDiffHighlight} from '../gr-diff-highlight/gr-diff-highlight';
 import {CoverageRange, DiffLayer, isDefined} from '../../../types/types';
 import {
-  CommentRangeLayer,
   GrRangedCommentLayer,
+  id,
 } from '../gr-ranged-comment-layer/gr-ranged-comment-layer';
 import {DiffViewMode, Side} from '../../../constants/constants';
 import {fire, fireAlert} from '../../../utils/event-util';
@@ -44,9 +44,12 @@ import {
   GrDiff as GrDiffApi,
   DisplayLine,
   DiffRangesToFocus,
+  FileRangeSelection,
   LineNumber,
   ContentLoadNeededEventDetail,
   DiffContextExpandedExternalDetail,
+  CopyInfoEventDetail,
+  CommentRangeLayer,
 } from '../../../api/diff';
 import {getShadowOrDocumentSelection} from '../../../utils/dom-util';
 import {assertIsDefined} from '../../../utils/common-util';
@@ -167,9 +170,14 @@ export class GrDiff extends LitElement implements GrDiffApi {
   @property({type: Boolean})
   noRenderOnPrefsChange?: boolean;
 
-  // explicitly highlight a range if it is not associated with any comment
+  @property({type: String})
+  actionHoverCardText?: string;
+
+  // By default <gr-diff> highlights all ranges that are referenced by a
+  // comment. This `highlightRange` property allows to also highlight one other
+  // range explicitly.
   @property({type: Object})
-  highlightRange?: CommentRange;
+  highlightRange?: CommentRangeLayer;
 
   @property({type: Array})
   coverageRanges: CoverageRange[] = [];
@@ -274,7 +282,7 @@ export class GrDiff extends LitElement implements GrDiffApi {
 
   private focusLayer = new GrFocusLayer();
 
-  private rangeLayer = new GrRangedCommentLayer();
+  private highlightLayer = new GrRangedCommentLayer();
 
   @state() groups: GrDiffGroup[] = [];
 
@@ -372,7 +380,8 @@ export class GrDiff extends LitElement implements GrDiffApi {
       changedProperties.has('showNewlineWarningRight') ||
       changedProperties.has('prefs') ||
       changedProperties.has('lineOfInterest') ||
-      changedProperties.has('diffRangesToFocus')
+      changedProperties.has('diffRangesToFocus') ||
+      changedProperties.has('actionHoverCardText')
     ) {
       if (this.diff && this.prefs) {
         const renderPrefs = {...(this.renderPrefs ?? {})};
@@ -441,6 +450,16 @@ export class GrDiff extends LitElement implements GrDiffApi {
     }
     if (changedProperties.has('diffRangesToFocus')) {
       this.updateFocusRanges(this.diffRangesToFocus);
+    }
+    if (changedProperties.has('actionHoverCardText')) {
+      if (this.actionHoverCardText) {
+        this.diffModel.updateState({
+          actionHoverCardText: this.actionHoverCardText,
+        });
+      }
+    }
+    if (changedProperties.has('highlightRange')) {
+      this.updateHighlightLayer(this.diffModel.getState().comments);
     }
   }
 
@@ -535,6 +554,22 @@ export class GrDiff extends LitElement implements GrDiffApi {
     return !!this.highlights.selectedRange;
   }
 
+  getSelectedRange(): FileRangeSelection | undefined {
+    if (!this.highlights.selectedRange || !this.path) {
+      return undefined;
+    }
+    return {
+      text_range: {
+        start_line: this.highlights.selectedRange.range.start_line,
+        start_column: this.highlights.selectedRange.range.start_character,
+        end_line: this.highlights.selectedRange.range.end_line,
+        end_column: this.highlights.selectedRange.range.end_character,
+      },
+      file_path: this.path,
+      side: this.highlights.selectedRange.side,
+    };
+  }
+
   // Private but used in tests.
   selectLine(el: Element) {
     const lineNumber = Number(el.getAttribute('data-value'));
@@ -551,6 +586,10 @@ export class GrDiff extends LitElement implements GrDiffApi {
     assertIsDefined(selectedRange, 'no range selected');
     const {side, range} = selectedRange;
     this.diffModel.createCommentOnRange(range, side);
+  }
+
+  isShowFullContext() {
+    return this.diffModel.getState().showFullContext === FullContext.YES;
   }
 
   private lineOfInterestChanged() {
@@ -684,23 +723,30 @@ export class GrDiff extends LitElement implements GrDiffApi {
       .filter(isDefined)
       .sort(compareComments);
     this.diffModel.updateState({comments});
-    this.updateRangeLayer(comments);
+    this.updateHighlightLayer(comments);
     for (const el of threadEls) {
       el.addEventListener('mouseenter', this.commentThreadEnterRedispatcher);
       el.addEventListener('mouseleave', this.commentThreadLeaveRedispatcher);
     }
   }
 
-  private updateRangeLayer(threads: GrDiffCommentThread[]) {
+  /**
+   * Updates the layer that highlights all ranges that belong to a comment
+   * and the `this.highlightRange`.
+   */
+  private updateHighlightLayer(threads: GrDiffCommentThread[]) {
     const ranges: CommentRangeLayer[] = threads
       .filter(t => !!t.range)
       .map(t => {
         return {range: t.range!, side: t.side, id: t.rootId};
       });
     if (this.highlightRange) {
-      ranges.push({side: Side.RIGHT, range: this.highlightRange, id: 'hl'});
+      ranges.push({
+        ...this.highlightRange,
+        id: `hl-${id(this.highlightRange)}`,
+      });
     }
-    this.rangeLayer.updateRanges(ranges);
+    this.highlightLayer.updateRanges(ranges);
   }
 
   // TODO: Migrate callers to just update prefs.context.
@@ -744,7 +790,7 @@ export class GrDiff extends LitElement implements GrDiffApi {
       this.createIntralineLayer(),
       this.createTabIndicatorLayer(),
       this.createSpecialCharacterIndicatorLayer(),
-      this.rangeLayer,
+      this.highlightLayer,
       this.coverageLayerLeft,
       this.coverageLayerRight,
       this.focusLayer,
@@ -1034,5 +1080,6 @@ declare global {
     'diff-context-expanded': CustomEvent<DiffContextExpandedExternalDetail>;
     'diff-context-expanded-internal-new': CustomEvent<DiffContextExpandedEventDetail>;
     'content-load-needed': CustomEvent<ContentLoadNeededEventDetail>;
+    'copy-info': CustomEvent<CopyInfoEventDetail>;
   }
 }

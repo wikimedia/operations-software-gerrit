@@ -483,7 +483,7 @@ export class GrFileList extends LitElement {
         }
         .drafts {
           color: var(--error-foreground);
-          font-weight: var(--font-weight-bold);
+          font-weight: var(--font-weight-medium);
         }
         .show-hide-icon:focus {
           outline: none;
@@ -519,9 +519,11 @@ export class GrFileList extends LitElement {
         }
         .newFilePath {
           color: var(--primary-text-color);
+          font-weight: var(--font-weight-medium);
         }
         .fileName {
           color: var(--link-color);
+          font-weight: var(--font-weight-medium);
         }
         .truncatedFileName {
           display: none;
@@ -1732,10 +1734,22 @@ export class GrFileList extends LitElement {
     }
 
     const iconsByName: Record<string, ChecksIcon[]> = {};
-    for (const result of this.checkResults ?? []) {
+
+    // Check both current and old file paths
+    const pathsToCheck = [file.__path];
+    if (file.old_path) {
+      pathsToCheck.push(file.old_path);
+    }
+
+    const latestResults =
+      this.checkResults?.filter(result => result.isLatestAttempt) ?? [];
+
+    for (const result of latestResults) {
       if (
         result.codePointers === undefined ||
-        !result.codePointers.some(pointer => pointer.path === file.__path)
+        !result.codePointers.some(pointer =>
+          pathsToCheck.includes(pointer.path)
+        )
       ) {
         continue;
       }
@@ -2351,11 +2365,16 @@ export class GrFileList extends LitElement {
       this.fileListIncrement,
       this.files.length - this.numFilesShown
     );
-    return `Show ${text} more`;
+    return `Show ${text} More`;
   }
 
-  private computeShowAllText() {
-    return `Show all ${this.files.length} files`;
+  // Private but used in tests.
+  computeShowAllText() {
+    // Exclude commit message from total count since it's not a real file
+    const fileCount = this.files.filter(
+      f => f.__path !== SpecialFilePath.COMMIT_MESSAGE
+    ).length;
+    return `Show All ${fileCount} Files`;
   }
 
   private computeWarnShowAll() {

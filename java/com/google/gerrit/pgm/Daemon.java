@@ -74,6 +74,7 @@ import com.google.gerrit.server.audit.AuditModule;
 import com.google.gerrit.server.cache.h2.H2CacheModule;
 import com.google.gerrit.server.cache.mem.DefaultMemoryCacheModule;
 import com.google.gerrit.server.change.AttentionSetOwnerAdder.AttentionSetOwnerAdderModule;
+import com.google.gerrit.server.change.DraftCommentsCleanupRunner;
 import com.google.gerrit.server.config.AuthConfig;
 import com.google.gerrit.server.config.AuthConfigModule;
 import com.google.gerrit.server.config.CanonicalWebUrlModule;
@@ -378,6 +379,11 @@ public class Daemon extends SiteProgram {
   }
 
   @VisibleForTesting
+  public void addAdditionalDbModuleForTesting(@Nullable Module... modules) {
+    testDbModules.addAll(Arrays.asList(modules));
+  }
+
+  @VisibleForTesting
   public void addAdditionalSshModuleForTesting(@Nullable Module... modules) {
     testSshModules.addAll(Arrays.asList(modules));
   }
@@ -562,6 +568,7 @@ public class Daemon extends SiteProgram {
       modules.add(new AccountDeactivatorModule());
       modules.add(new AttentionSetOwnerAdderModule());
       modules.add(new CleanupChangesModule());
+      modules.add(new DraftCommentsCleanupRunner.Module());
     }
     modules.add(new LocalMergeSuperSetComputationModule());
     modules.add(new DefaultLockManagerModule());

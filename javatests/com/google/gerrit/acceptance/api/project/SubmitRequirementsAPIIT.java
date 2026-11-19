@@ -589,7 +589,8 @@ public class SubmitRequirementsAPIIT extends AbstractDaemonTest {
 
     infos = gApi.projects().name(project.get()).submitRequirements().withInherited(true).get();
 
-    assertThat(names(infos)).containsExactly("No-Unresolved-Comments", "base-sr", "sr-1", "sr-2");
+    assertThat(names(infos))
+        .containsExactly("No-Unresolved-Comments", "Code-Review", "base-sr", "sr-1", "sr-2");
   }
 
   @Test

@@ -80,6 +80,7 @@ import java.util.function.Function;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexableField;
+import org.apache.lucene.index.StoredFields;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
@@ -255,6 +256,16 @@ public class LuceneChangeIndex implements ChangeIndex {
     Term idTerm = LuceneChangeIndex.idTerm(changeId);
     try {
       Futures.allAsList(openIndex.delete(idTerm), closedIndex.delete(idTerm)).get();
+    } catch (ExecutionException | InterruptedException e) {
+      throw new StorageException(e);
+    }
+  }
+
+  @Override
+  public void deleteAllForProject(Project.NameKey project) {
+    Term allForProject = new Term(ChangeField.PROJECT_SPEC.getName(), project.get());
+    try {
+      Futures.allAsList(openIndex.delete(allForProject), closedIndex.delete(allForProject)).get();
     } catch (ExecutionException | InterruptedException e) {
       throw new StorageException(e);
     }
@@ -447,7 +458,9 @@ public class LuceneChangeIndex implements ChangeIndex {
         List<Document> result = new ArrayList<>(docs.scoreDocs.length);
         for (int i = opts.start(); i < docs.scoreDocs.length; i++) {
           ScoreDoc sd = docs.scoreDocs[i];
-          result.add(searchers[sd.shardIndex].doc(sd.doc, fields));
+          IndexSearcher searcher = searchers[sd.shardIndex];
+          StoredFields storedFields = searcher.getIndexReader().storedFields();
+          result.add(storedFields.document(sd.doc, fields));
         }
         return new Results(result, searchAfterBySubIndex);
       } finally {

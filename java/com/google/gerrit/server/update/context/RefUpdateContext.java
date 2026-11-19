@@ -16,10 +16,14 @@ package com.google.gerrit.server.update.context;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 
 import com.google.common.collect.ImmutableList;
+import com.google.gerrit.common.UsedAt;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -151,6 +155,15 @@ public class RefUpdateContext implements AutoCloseable {
   private final RefUpdateType updateType;
   private final Optional<String> justification;
 
+  /**
+   * Custom data, e.g. Google-specific data.
+   *
+   * <p>This data is only stored on the top-level context (on which nesting level custom data is
+   * added is not relevant and storing it only on the top-level makes it easier to read custom data
+   * as then it's not needed to iterate over all contexts to collect/merge all the custom data).
+   */
+  private List<Object> customData;
+
   private RefUpdateContext(RefUpdateType updateType, Optional<String> justification) {
     this.updateType = updateType;
     this.justification = justification;
@@ -167,6 +180,73 @@ public class RefUpdateContext implements AutoCloseable {
       current.set(result);
     }
     return result;
+  }
+
+  /**
+   * Add custom data.
+   *
+   * <p>Custom data is always stored on the top-level context, but can be added through any context.
+   */
+  @UsedAt(UsedAt.Project.GOOGLE)
+  public void addCustomData(Object data) {
+    // Store the data in the top-level context only.
+    RefUpdateContext currentContext = current.get().getFirst();
+    if (this != currentContext) {
+      currentContext.addCustomData(data);
+      return;
+    }
+
+    if (customData == null) {
+      customData = new ArrayList<>();
+    }
+    customData.add(data);
+  }
+
+  /**
+   * Get all custom data that has a type that is assignable from the given class.
+   *
+   * <p>Custom data is always stored on the top-level context, but can be retrieved through any
+   * context.
+   */
+  @UsedAt(UsedAt.Project.GOOGLE)
+  @SuppressWarnings("unchecked")
+  public <T> ImmutableList<T> getCustomData(Class<T> clazz) {
+    // The data is available in the top-level context only.
+    RefUpdateContext currentContext = current.get().getFirst();
+    if (this != currentContext) {
+      return currentContext.getCustomData(clazz);
+    }
+
+    if (customData == null) {
+      return ImmutableList.of();
+    }
+
+    return customData.stream()
+        .filter(data -> clazz.isAssignableFrom(data.getClass()))
+        .map(data -> (T) data)
+        .collect(toImmutableList());
+  }
+
+  /**
+   * Remove all custom data that has a type that is assignable from the given class.
+   *
+   * <p>Custom data is only stored on the top-level context, but clearing custom data can be done
+   * through any context.
+   */
+  @UsedAt(UsedAt.Project.GOOGLE)
+  public <T> void clearCustomData(Class<T> clazz) {
+    // The data is available in the top-level context only.
+    RefUpdateContext currentContext = current.get().getFirst();
+    if (this != currentContext) {
+      currentContext.clearCustomData(clazz);
+      return;
+    }
+
+    if (customData == null) {
+      return;
+    }
+
+    customData.removeAll(getCustomData(clazz));
   }
 
   /**

@@ -90,9 +90,11 @@ import com.google.gerrit.server.ExceptionHookImpl;
 import com.google.gerrit.server.ExternalUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.PerformanceMetrics;
+import com.google.gerrit.server.PluginPushOption;
 import com.google.gerrit.server.RequestListener;
 import com.google.gerrit.server.ServerStateProvider;
 import com.google.gerrit.server.TraceRequestListener;
+import com.google.gerrit.server.ValidationOptionsListener;
 import com.google.gerrit.server.account.AccountControl;
 import com.google.gerrit.server.account.AccountDeactivator;
 import com.google.gerrit.server.account.AccountExternalIdCreator;
@@ -143,15 +145,14 @@ import com.google.gerrit.server.git.PureRevertCache;
 import com.google.gerrit.server.git.ReceivePackInitializer;
 import com.google.gerrit.server.git.TagCache;
 import com.google.gerrit.server.git.TransferConfig;
-import com.google.gerrit.server.git.receive.PluginPushOption;
 import com.google.gerrit.server.git.receive.ReceiveCommitsModule;
 import com.google.gerrit.server.git.validators.CommentCountValidator;
 import com.google.gerrit.server.git.validators.CommentCumulativeSizeValidator;
 import com.google.gerrit.server.git.validators.CommentSizeValidator;
+import com.google.gerrit.server.git.validators.CommitValidationInfoListener;
 import com.google.gerrit.server.git.validators.CommitValidationListener;
 import com.google.gerrit.server.git.validators.MergeValidationListener;
 import com.google.gerrit.server.git.validators.MergeValidators;
-import com.google.gerrit.server.git.validators.MergeValidators.AccountMergeValidator;
 import com.google.gerrit.server.git.validators.MergeValidators.GroupMergeValidator;
 import com.google.gerrit.server.git.validators.MergeValidators.ProjectConfigValidator;
 import com.google.gerrit.server.git.validators.OnSubmitValidationListener;
@@ -198,6 +199,7 @@ import com.google.gerrit.server.project.SubmitRequirementConfigValidator;
 import com.google.gerrit.server.project.SubmitRequirementsEvaluatorImpl;
 import com.google.gerrit.server.project.SubmitRuleEvaluator;
 import com.google.gerrit.server.query.approval.ApprovalModule;
+import com.google.gerrit.server.query.approval.ApprovalQueryBuilder;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeIsVisibleToPredicate;
 import com.google.gerrit.server.query.change.ChangeQueryBuilder;
@@ -223,6 +225,8 @@ import com.google.gerrit.server.submitrequirement.predicate.HasSubmoduleUpdatePr
 import com.google.gerrit.server.submitrequirement.predicate.SubmitRequirementLabelExtensionPredicate;
 import com.google.gerrit.server.tools.ToolsCatalog;
 import com.google.gerrit.server.update.BatchUpdate;
+import com.google.gerrit.server.update.LoggingRetryListener;
+import com.google.gerrit.server.update.RetryListener;
 import com.google.gerrit.server.util.IdGenerator;
 import com.google.gerrit.server.util.ThreadLocalRequestContext;
 import com.google.gerrit.server.validators.AccountActivationValidationListener;
@@ -420,6 +424,7 @@ public class GerritGlobalModule extends FactoryModule {
     DynamicSet.bind(binder(), CommitValidationListener.class)
         .to(SubmitRequirementConfigValidator.class);
     DynamicSet.bind(binder(), CommitValidationListener.class).to(PrologRulesWarningValidator.class);
+    DynamicSet.setOf(binder(), CommitValidationInfoListener.class);
     DynamicSet.setOf(binder(), CommentValidator.class);
     DynamicSet.setOf(binder(), DiffValidator.class);
     DynamicSet.bind(binder(), DiffValidator.class).to(DiffFileSizeValidator.class);
@@ -479,6 +484,9 @@ public class GerritGlobalModule extends FactoryModule {
     DynamicSet.setOf(binder(), AccountStateProvider.class);
     DynamicMap.mapOf(binder(), AccountTagProvider.class);
     DynamicSet.setOf(binder(), AttentionSetListener.class);
+    DynamicSet.setOf(binder(), ValidationOptionsListener.class);
+    DynamicSet.setOf(binder(), RetryListener.class);
+    DynamicSet.bind(binder(), RetryListener.class).to(LoggingRetryListener.class);
 
     DynamicMap.mapOf(binder(), MailFilter.class);
     bind(MailFilter.class).annotatedWith(Exports.named("ListMailFilter")).to(ListMailFilter.class);
@@ -503,6 +511,7 @@ public class GerritGlobalModule extends FactoryModule {
     DynamicMap.mapOf(binder(), ChangeQueryBuilder.ChangeOperatorFactory.class);
     DynamicMap.mapOf(binder(), ChangeQueryBuilder.ChangeHasOperandFactory.class);
     DynamicMap.mapOf(binder(), ChangeQueryBuilder.ChangeIsOperandFactory.class);
+    DynamicMap.mapOf(binder(), ApprovalQueryBuilder.UserInOperandFactory.class);
     DynamicSet.setOf(binder(), ChangePluginDefinedInfoFactory.class);
 
     install(new GitwebConfig.LegacyModule(cfg));
@@ -510,7 +519,6 @@ public class GerritGlobalModule extends FactoryModule {
     bind(AnonymousUser.class);
 
     factory(AbandonOp.Factory.class);
-    factory(AccountMergeValidator.Factory.class);
     factory(GroupMergeValidator.Factory.class);
     factory(RefOperationValidators.Factory.class);
     factory(OnSubmitValidators.Factory.class);

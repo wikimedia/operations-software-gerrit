@@ -57,6 +57,10 @@ import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountLoader;
 import com.google.gerrit.server.account.AccountResolver;
 import com.google.gerrit.server.account.GroupMembers;
+import com.google.gerrit.server.change.ReviewerModifier.FailureBehavior;
+import com.google.gerrit.server.change.ReviewerModifier.InternalReviewerInput;
+import com.google.gerrit.server.change.ReviewerModifier.ReviewerModification;
+import com.google.gerrit.server.change.ReviewerModifier.ReviewerModificationList;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.group.GroupResolver;
 import com.google.gerrit.server.group.SystemGroupBackend;
@@ -287,7 +291,15 @@ public class ReviewerModifier {
         reviewerUser =
             accountResolver.resolveIncludeInactiveIgnoreVisibility(input.reviewer).asUniqueUser();
       } else {
-        reviewerUser = accountResolver.resolveIncludeInactive(input.reviewer).asUniqueUser();
+        // First search only active accounts to see if only one unique account is returned
+        AccountResolver.Result accountResolverResult = accountResolver.resolve(input.reviewer);
+
+        if (accountResolverResult.asList().isEmpty()) {
+          // Fallback to searching inactive account
+          accountResolverResult = accountResolver.resolveIncludeInactive(input.reviewer);
+        }
+
+        reviewerUser = accountResolverResult.asUniqueUser();
       }
       if (input.reviewer.equalsIgnoreCase(reviewerUser.getName())
           || input.reviewer.equals(String.valueOf(reviewerUser.getAccountId()))) {
@@ -334,7 +346,7 @@ public class ReviewerModifier {
     try {
       // TODO(dborowitz): This currently doesn't work in the push path because InternalGroupBackend
       // depends on the Provider<CurrentUser> which returns anonymous in that path.
-      group = groupResolver.parseInternal(input.reviewer);
+      group = groupResolver.parse(input.reviewer);
     } catch (UnprocessableEntityException e) {
       if (!allowByEmail) {
         return fail(
@@ -544,7 +556,7 @@ public class ReviewerModifier {
       // the Op because the accounts are in a different table.
       ReviewerOp.Result opResult = op.getResult();
       switch (state()) {
-        case CC:
+        case CC -> {
           result.ccs = Lists.newArrayListWithCapacity(opResult.addedCCs().size());
           for (Account.Id accountId : opResult.addedCCs()) {
             result.ccs.add(json.format(new ReviewerInfo(accountId.get()), accountId, cd));
@@ -553,8 +565,8 @@ public class ReviewerModifier {
           for (Address a : opResult.addedCCsByEmail()) {
             result.ccs.add(new AccountInfo(a.name(), a.email()));
           }
-          break;
-        case REVIEWER:
+        }
+        case REVIEWER -> {
           result.reviewers = Lists.newArrayListWithCapacity(opResult.addedReviewers().size());
           for (PatchSetApproval psa : opResult.addedReviewers()) {
             // New reviewers have value 0, don't bother normalizing.
@@ -569,8 +581,8 @@ public class ReviewerModifier {
           for (Address a : opResult.addedReviewersByEmail()) {
             result.reviewers.add(ReviewerInfo.byEmail(a.name(), a.email()));
           }
-          break;
-        case REMOVED:
+        }
+        case REMOVED -> {
           if (opResult.deletedReviewer().isPresent()) {
             result.removed =
                 json.format(
@@ -584,10 +596,10 @@ public class ReviewerModifier {
                     opResult.deletedReviewerByEmail().get().name(),
                     opResult.deletedReviewerByEmail().get().email());
           }
-          break;
-        default:
-          throw new IllegalStateException(
-              String.format("Illegal ReviewerState argument is %s", state().name()));
+        }
+        default ->
+            throw new IllegalStateException(
+                String.format("Illegal ReviewerState argument is %s", state().name()));
       }
     }
 
@@ -612,7 +624,7 @@ public class ReviewerModifier {
   }
 
   public static boolean isLegalReviewerGroup(AccountGroup.UUID groupUUID) {
-    return !SystemGroupBackend.isSystemGroup(groupUUID);
+    return groupUUID.isInternalGroup() || SystemGroupBackend.PROJECT_OWNERS.equals(groupUUID);
   }
 
   public ReviewerModificationList prepare(

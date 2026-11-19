@@ -15,26 +15,28 @@
 package com.google.gerrit.server.git.validators;
 
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.gerrit.entities.Change.CHANGE_ID_PATTERN;
 import static com.google.gerrit.entities.RefNames.REFS_CHANGES;
 import static com.google.gerrit.entities.RefNames.REFS_CONFIG;
+import static com.google.gerrit.server.git.validators.CommitValidationInfo.NO_METADATA;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
-import static java.util.stream.Collectors.toList;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Streams;
 import com.google.common.flogger.FluentLogger;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.FooterConstants;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.BooleanProjectConfig;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Patch;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.RefNames;
-import com.google.gerrit.extensions.api.config.ConsistencyCheckInfo.ConsistencyProblemInfo;
 import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.metrics.Counter2;
@@ -44,14 +46,11 @@ import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
-import com.google.gerrit.server.account.AccountCache;
-import com.google.gerrit.server.account.externalids.ExternalIdsConsistencyChecker;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.events.CommitReceivedEvent;
-import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.ValidationError;
 import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
@@ -62,6 +61,7 @@ import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.permissions.RefPermission;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
+import com.google.gerrit.server.plugincontext.PluginSetEntryContext;
 import com.google.gerrit.server.project.LabelConfigValidator;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectConfig;
@@ -75,10 +75,11 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.net.MalformedURLException;
-import java.net.URL;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -88,7 +89,6 @@ import java.util.stream.Collectors;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.PersonIdent;
-import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.notes.NoteMap;
 import org.eclipse.jgit.revwalk.FooterKey;
 import org.eclipse.jgit.revwalk.FooterLine;
@@ -111,12 +111,8 @@ public class CommitValidators {
     private final PersonIdent gerritIdent;
     private final DynamicItem<UrlFormatter> urlFormatter;
     private final PluginSetContext<CommitValidationListener> pluginValidators;
-    private final GitRepositoryManager repoManager;
     private final AllUsersName allUsers;
     private final AllProjectsName allProjects;
-    private final ExternalIdsConsistencyChecker externalIdsConsistencyChecker;
-    private final AccountValidator accountValidator;
-    private final AccountCache accountCache;
     private final ProjectCache projectCache;
     private final ProjectConfig.Factory projectConfigFactory;
     private final ProjectNotifyFilterValidator projectNotifyFilterValidator;
@@ -125,6 +121,7 @@ public class CommitValidators {
     private final ChangeUtil changeUtil;
     private final MetricMaker metricMaker;
     private final ApprovalQueryBuilder approvalQueryBuilder;
+    private final PluginSetContext<CommitValidationInfoListener> commitValidationInfoListeners;
 
     @Inject
     Factory(
@@ -132,29 +129,22 @@ public class CommitValidators {
         DynamicItem<UrlFormatter> urlFormatter,
         @GerritServerConfig Config config,
         PluginSetContext<CommitValidationListener> pluginValidators,
-        GitRepositoryManager repoManager,
         AllUsersName allUsers,
         AllProjectsName allProjects,
-        ExternalIdsConsistencyChecker externalIdsConsistencyChecker,
-        AccountValidator accountValidator,
-        AccountCache accountCache,
         ProjectCache projectCache,
         ProjectConfig.Factory projectConfigFactory,
         ProjectNotifyFilterValidator projectNotifyFilterValidator,
         ProjectConfigRegexValidator projectConfigRegexValidator,
         ChangeUtil changeUtil,
         MetricMaker metricMaker,
-        ApprovalQueryBuilder approvalQueryBuilder) {
+        ApprovalQueryBuilder approvalQueryBuilder,
+        PluginSetContext<CommitValidationInfoListener> commitValidationInfoListeners) {
       this.gerritIdent = gerritIdent;
       this.urlFormatter = urlFormatter;
       this.config = config;
       this.pluginValidators = pluginValidators;
-      this.repoManager = repoManager;
       this.allUsers = allUsers;
       this.allProjects = allProjects;
-      this.externalIdsConsistencyChecker = externalIdsConsistencyChecker;
-      this.accountValidator = accountValidator;
-      this.accountCache = accountCache;
       this.projectCache = projectCache;
       this.projectConfigFactory = projectConfigFactory;
       this.projectNotifyFilterValidator = projectNotifyFilterValidator;
@@ -162,6 +152,7 @@ public class CommitValidators {
       this.changeUtil = changeUtil;
       this.metricMaker = metricMaker;
       this.approvalQueryBuilder = approvalQueryBuilder;
+      this.commitValidationInfoListeners = commitValidationInfoListeners;
     }
 
     public CommitValidators forReceiveCommits(
@@ -198,13 +189,19 @@ public class CommitValidators {
                   rw,
                   allUsers,
                   allProjects))
-          .add(new BannedCommitsValidator(rejectCommits))
-          .add(new PluginCommitValidationListener(pluginValidators, skipValidation))
-          .add(new ExternalIdUpdateListener(allUsers, externalIdsConsistencyChecker, accountCache))
-          .add(new AccountCommitValidator(repoManager, allUsers, accountValidator))
+          .add(new BannedCommitsValidator(rejectCommits));
+
+      Iterator<PluginSetEntryContext<CommitValidationListener>> pluginValidatorsIt =
+          pluginValidators.iterator();
+      while (pluginValidatorsIt.hasNext()) {
+        validators.add(skippablePluginValidator(pluginValidatorsIt.next().get(), skipValidation));
+      }
+
+      validators
           .add(new GroupCommitValidator(allUsers))
           .add(new LabelConfigValidator(approvalQueryBuilder));
-      return new CommitValidators(validators.build());
+
+      return new CommitValidators(commitValidationInfoListeners, validators.build());
     }
 
     public CommitValidators forGerritCommits(
@@ -237,13 +234,19 @@ public class CommitValidators {
                   user,
                   rw,
                   allUsers,
-                  allProjects))
-          .add(new PluginCommitValidationListener(pluginValidators))
-          .add(new ExternalIdUpdateListener(allUsers, externalIdsConsistencyChecker, accountCache))
-          .add(new AccountCommitValidator(repoManager, allUsers, accountValidator))
+                  allProjects));
+
+      Iterator<PluginSetEntryContext<CommitValidationListener>> pluginValidatorsIt =
+          pluginValidators.iterator();
+      while (pluginValidatorsIt.hasNext()) {
+        validators.add(pluginValidatorsIt.next().get());
+      }
+
+      validators
           .add(new GroupCommitValidator(allUsers))
           .add(new LabelConfigValidator(approvalQueryBuilder));
-      return new CommitValidators(validators.build());
+
+      return new CommitValidators(commitValidationInfoListeners, validators.build());
     }
 
     public CommitValidators forMergedCommits(
@@ -270,22 +273,84 @@ public class CommitValidators {
           .add(new ProjectStateValidationListener(projectState))
           .add(new AuthorUploaderValidator(user, perm, urlFormatter.get()))
           .add(new CommitterUploaderValidator(user, perm, urlFormatter.get()));
-      return new CommitValidators(validators.build());
+      return new CommitValidators(commitValidationInfoListeners, validators.build());
+    }
+
+    CommitValidationListener skippablePluginValidator(
+        CommitValidationListener pluginValidator, boolean skipValidation) {
+      return new CommitValidationListener() {
+        @Override
+        public String getValidatorName() {
+          return pluginValidator.getValidatorName();
+        }
+
+        @Override
+        public CommitValidationInfo validateCommit(CommitReceivedEvent receiveEvent)
+            throws CommitValidationException {
+          if (skipValidation && !pluginValidator.shouldValidateAllCommits()) {
+            return CommitValidationInfo.skippedByUser(NO_METADATA);
+          }
+          return pluginValidator.validateCommit(receiveEvent);
+        }
+      };
     }
   }
 
+  private final PluginSetContext<CommitValidationInfoListener> commitValidationInfoListeners;
   private final List<CommitValidationListener> validators;
 
-  CommitValidators(List<CommitValidationListener> validators) {
+  @Nullable private PatchSet.Id patchSetId;
+  private boolean invokeCommitValidationInfoListeners = true;
+
+  CommitValidators(
+      PluginSetContext<CommitValidationInfoListener> commitValidationInfoListeners,
+      List<CommitValidationListener> validators) {
+    this.commitValidationInfoListeners = commitValidationInfoListeners;
     this.validators = validators;
   }
 
+  /**
+   * Sets the patch set for which the validation is done.
+   *
+   * <p>If the validation is done for a commit that is not associated with a patch set (e.g. when
+   * commits are pushed directly, bypassing code-review) this method doesn't need to be called.
+   *
+   * @param patchSetId the patch set for which the validation is done
+   * @return the {@link CommitValidators} instance to allow chaining calls
+   */
   @CanIgnoreReturnValue
-  public List<CommitValidationMessage> validate(CommitReceivedEvent receiveEvent)
+  public CommitValidators patchSet(PatchSet.Id patchSetId) {
+    this.patchSetId = patchSetId;
+    return this;
+  }
+
+  /**
+   * Whether the {@link CommitValidationInfoListener}s should be invoked after the validation is
+   * done.
+   *
+   * <p>If invoking the {@link CommitValidationInfoListener}s is skipped, it's the responsibility of
+   * the caller to invoke them later. For example, this makes sense when commits are validated and
+   * the information about the change/patch-set (see {@link
+   * #patchSet(com.google.gerrit.entities.PatchSet.Id)} is not available yet.
+   *
+   * @param invokeCommitValidationInfoListeners Whether the {@link CommitValidationInfoListener}s
+   *     should be invoked after the validation is done.
+   * @return the {@link CommitValidators} instance to allow chaining calls
+   */
+  @CanIgnoreReturnValue
+  public CommitValidators invokeCommitValidationInfoListeners(
+      boolean invokeCommitValidationInfoListeners) {
+    this.invokeCommitValidationInfoListeners = invokeCommitValidationInfoListeners;
+    return this;
+  }
+
+  @CanIgnoreReturnValue
+  public ImmutableMap<String, CommitValidationInfo> validate(CommitReceivedEvent receiveEvent)
       throws CommitValidationException {
-    List<CommitValidationMessage> messages = new ArrayList<>();
-    try {
-      for (CommitValidationListener commitValidator : validators) {
+    ImmutableMap.Builder<String, CommitValidationInfo> validationInfosBuilder =
+        ImmutableMap.builder();
+    for (CommitValidationListener commitValidator : validators) {
+      try {
         try (TraceTimer ignored =
             TraceContext.newTimer(
                 "Running CommitValidationListener",
@@ -295,17 +360,37 @@ public class CommitValidators {
                     .branchName(receiveEvent.getBranchNameKey().branch())
                     .commit(receiveEvent.commit.name())
                     .build())) {
-          messages.addAll(commitValidator.onCommitReceived(receiveEvent));
+          CommitValidationInfo commitValidationInfo = commitValidator.validateCommit(receiveEvent);
+          logger.atFine().log(
+              "commit %s has passed validator %s: %s",
+              receiveEvent.commit.name(), commitValidator.getValidatorName(), commitValidationInfo);
+          validationInfosBuilder.put(commitValidator.getValidatorName(), commitValidationInfo);
         }
+      } catch (CommitValidationException e) {
+        // Keep the old messages (and their order) in case of an exception
+        ImmutableList<CommitValidationMessage> messages =
+            Streams.concat(
+                    validationInfosBuilder.build().values().stream()
+                        .flatMap(validationInfo -> validationInfo.validationMessages().stream()),
+                    e.getMessages().stream())
+                .collect(toImmutableList());
+        logger.atFine().withCause(e).log(
+            "commit %s was rejected by validator %s: %s",
+            receiveEvent.commit.name(), commitValidator.getValidatorName(), messages);
+        throw new CommitValidationException(e.getMessage(), messages);
       }
-    } catch (CommitValidationException e) {
-      logger.atFine().withCause(e).log(
-          "CommitValidationException occurred: %s", e.getFullMessage());
-      // Keep the old messages (and their order) in case of an exception
-      messages.addAll(e.getMessages());
-      throw new CommitValidationException(e.getMessage(), messages);
     }
-    return messages;
+
+    ImmutableMap<String, CommitValidationInfo> validationInfos = validationInfosBuilder.build();
+
+    if (invokeCommitValidationInfoListeners) {
+      commitValidationInfoListeners.runEach(
+          commitValidationInfoListener ->
+              commitValidationInfoListener.commitValidated(
+                  validationInfos, receiveEvent, patchSetId));
+    }
+
+    return validationInfos;
   }
 
   public static class ChangeIdValidator implements CommitValidationListener {
@@ -736,55 +821,6 @@ public class CommitValidators {
     }
   }
 
-  /** Execute commit validation plug-ins */
-  public static class PluginCommitValidationListener implements CommitValidationListener {
-    private final boolean skipValidation;
-    private final PluginSetContext<CommitValidationListener> commitValidationListeners;
-
-    public PluginCommitValidationListener(
-        final PluginSetContext<CommitValidationListener> commitValidationListeners) {
-      this(commitValidationListeners, false);
-    }
-
-    public PluginCommitValidationListener(
-        final PluginSetContext<CommitValidationListener> commitValidationListeners,
-        boolean skipValidation) {
-      this.skipValidation = skipValidation;
-      this.commitValidationListeners = commitValidationListeners;
-    }
-
-    private void runValidator(
-        CommitValidationListener validator,
-        List<CommitValidationMessage> messages,
-        CommitReceivedEvent receiveEvent)
-        throws CommitValidationException {
-      if (skipValidation && !validator.shouldValidateAllCommits()) {
-        return;
-      }
-      messages.addAll(validator.onCommitReceived(receiveEvent));
-    }
-
-    @Override
-    public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent receiveEvent)
-        throws CommitValidationException {
-      List<CommitValidationMessage> messages = new ArrayList<>();
-      try {
-        commitValidationListeners.runEach(
-            l -> runValidator(l, messages, receiveEvent), CommitValidationException.class);
-      } catch (CommitValidationException e) {
-        messages.addAll(e.getMessages());
-        throw new CommitValidationException(e.getMessage(), messages);
-      }
-      return messages;
-    }
-
-    @Override
-    public boolean shouldValidateAllCommits() {
-      return commitValidationListeners.stream()
-          .anyMatch(CommitValidationListener::shouldValidateAllCommits);
-    }
-  }
-
   public static class SignedOffByValidator implements CommitValidationListener {
     private final IdentifiedUser user;
     private final PermissionBackend.ForRef perm;
@@ -967,106 +1003,6 @@ public class CommitValidators {
     }
   }
 
-  /** Validates updates to refs/meta/external-ids. */
-  public static class ExternalIdUpdateListener implements CommitValidationListener {
-    private final AllUsersName allUsers;
-    private final AccountCache accountCache;
-    private final ExternalIdsConsistencyChecker externalIdsConsistencyChecker;
-
-    public ExternalIdUpdateListener(
-        AllUsersName allUsers,
-        ExternalIdsConsistencyChecker externalIdsConsistencyChecker,
-        AccountCache accountCache) {
-      this.externalIdsConsistencyChecker = externalIdsConsistencyChecker;
-      this.allUsers = allUsers;
-      this.accountCache = accountCache;
-    }
-
-    @Override
-    public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent receiveEvent)
-        throws CommitValidationException {
-      if (allUsers.equals(receiveEvent.project.getNameKey())
-          && RefNames.REFS_EXTERNAL_IDS.equals(receiveEvent.refName)) {
-        try {
-          List<ConsistencyProblemInfo> problems =
-              externalIdsConsistencyChecker.check(accountCache, receiveEvent.commit);
-          List<CommitValidationMessage> msgs =
-              problems.stream()
-                  .map(
-                      p ->
-                          new CommitValidationMessage(
-                              p.message,
-                              p.status == ConsistencyProblemInfo.Status.ERROR
-                                  ? ValidationMessage.Type.ERROR
-                                  : ValidationMessage.Type.OTHER))
-                  .collect(toList());
-          if (msgs.stream().anyMatch(ValidationMessage::isError)) {
-            throw new CommitValidationException("invalid external IDs", msgs);
-          }
-          return msgs;
-        } catch (IOException | ConfigInvalidException e) {
-          throw new CommitValidationException("error validating external IDs", e);
-        }
-      }
-      return Collections.emptyList();
-    }
-  }
-
-  public static class AccountCommitValidator implements CommitValidationListener {
-    private final GitRepositoryManager repoManager;
-    private final AllUsersName allUsers;
-    private final AccountValidator accountValidator;
-
-    public AccountCommitValidator(
-        GitRepositoryManager repoManager,
-        AllUsersName allUsers,
-        AccountValidator accountValidator) {
-      this.repoManager = repoManager;
-      this.allUsers = allUsers;
-      this.accountValidator = accountValidator;
-    }
-
-    @Override
-    public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent receiveEvent)
-        throws CommitValidationException {
-      if (!allUsers.equals(receiveEvent.project.getNameKey())) {
-        return Collections.emptyList();
-      }
-
-      if (receiveEvent.command.getRefName().startsWith(MagicBranch.NEW_CHANGE)) {
-        // no validation on push for review, will be checked on submit by
-        // MergeValidators.AccountMergeValidator
-        return Collections.emptyList();
-      }
-
-      Account.Id accountId = Account.Id.fromRef(receiveEvent.refName);
-      if (accountId == null) {
-        return Collections.emptyList();
-      }
-
-      try (Repository repo = repoManager.openRepository(allUsers)) {
-        List<String> errorMessages =
-            accountValidator.validate(
-                accountId,
-                repo,
-                receiveEvent.revWalk,
-                receiveEvent.command.getOldId(),
-                receiveEvent.commit);
-        if (!errorMessages.isEmpty()) {
-          throw new CommitValidationException(
-              "invalid account configuration",
-              errorMessages.stream()
-                  .map(m -> new CommitValidationMessage(m, ValidationMessage.Type.ERROR))
-                  .collect(toList()));
-        }
-      } catch (IOException e) {
-        throw new CommitValidationException(
-            String.format("Validating update for account %s failed", accountId.get()), e);
-      }
-      return Collections.emptyList();
-    }
-  }
-
   /** Rejects updates to group branches. */
   public static class GroupCommitValidator implements CommitValidationListener {
     private final AllUsersName allUsers;
@@ -1150,7 +1086,7 @@ public class CommitValidators {
   private static String getGerritHost(String canonicalWebUrl) {
     if (canonicalWebUrl != null) {
       try {
-        return new URL(canonicalWebUrl).getHost();
+        return URI.create(canonicalWebUrl).toURL().getHost();
       } catch (MalformedURLException ignored) {
         logger.atWarning().log(
             "configured canonical web URL is invalid, using system default: %s",

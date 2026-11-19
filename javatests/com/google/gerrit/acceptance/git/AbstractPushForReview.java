@@ -24,6 +24,9 @@ import static com.google.gerrit.acceptance.GitUtil.assertPushRejected;
 import static com.google.gerrit.acceptance.GitUtil.pushHead;
 import static com.google.gerrit.acceptance.GitUtil.pushOne;
 import static com.google.gerrit.acceptance.PushOneCommit.FILE_NAME;
+import static com.google.gerrit.acceptance.TestExtensions.TestCommitValidationInfoListener;
+import static com.google.gerrit.acceptance.TestExtensions.TestCommitValidationListener;
+import static com.google.gerrit.acceptance.TestExtensions.TestPluginPushOption;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowCapability;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowLabel;
@@ -69,6 +72,7 @@ import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.Address;
 import com.google.gerrit.entities.AttentionSetUpdate;
 import com.google.gerrit.entities.BooleanProjectConfig;
+import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.LabelId;
@@ -102,10 +106,14 @@ import com.google.gerrit.extensions.events.TopicEditedListener;
 import com.google.gerrit.extensions.restapi.testing.AttentionSetUpdateSubject;
 import com.google.gerrit.git.ObjectIds;
 import com.google.gerrit.server.ChangeMessagesUtil;
+import com.google.gerrit.server.PluginPushOption;
+import com.google.gerrit.server.ServerInitiated;
+import com.google.gerrit.server.account.AccountsUpdate;
+import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.events.CommitReceivedEvent;
 import com.google.gerrit.server.git.receive.NoteDbPushOption;
-import com.google.gerrit.server.git.receive.PluginPushOption;
 import com.google.gerrit.server.git.receive.ReceiveConstants;
+import com.google.gerrit.server.git.validators.CommitValidationInfo;
 import com.google.gerrit.server.git.validators.CommitValidationListener;
 import com.google.gerrit.server.git.validators.CommitValidationMessage;
 import com.google.gerrit.server.group.SystemGroupBackend;
@@ -114,6 +122,7 @@ import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.testing.FakeEmailSender.Message;
 import com.google.gerrit.testing.TestTimeUtil;
 import com.google.inject.Inject;
+import com.google.inject.Provider;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -162,6 +171,7 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
   @Inject private ProjectOperations projectOperations;
   @Inject private RequestScopeOperations requestScopeOperations;
   @Inject private ExtensionRegistry extensionRegistry;
+  @Inject private @ServerInitiated Provider<AccountsUpdate> accountsUpdateProvider;
 
   private static String NEW_CHANGE_INDICATOR = " [NEW]";
   private LabelType patchSetLock;
@@ -198,17 +208,12 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
   }
 
   protected void selectProtocol(Protocol p) throws Exception {
-    String url;
-    switch (p) {
-      case SSH:
-        url = adminSshSession.getUrl();
-        break;
-      case HTTP:
-        url = admin.getHttpUrl(server);
-        break;
-      default:
-        throw new IllegalArgumentException("unexpected protocol: " + p);
-    }
+    String url =
+        switch (p) {
+          case SSH -> adminSshSession.getUrl();
+          case HTTP -> admin.getHttpUrl(server);
+          default -> throw new IllegalArgumentException("unexpected protocol: " + p);
+        };
     testRepo = GitUtil.cloneProject(project, url + "/" + project.get());
   }
 
@@ -490,7 +495,7 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
         .commit()
         .message("A change")
         .author(admin.newIdent())
-        .committer(new PersonIdent(admin.newIdent(), testRepo.getDate()))
+        .committer(new PersonIdent(admin.newIdent(), testRepo.getInstant()))
         .create();
     PushResult result = pushHead(testRepo, "refs/for/master");
     assertThat(result.getMessages()).contains("warning: pushing without Change-Id is deprecated");
@@ -819,6 +824,46 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
     assertThat(reviewers.get(0)._accountId).isNull();
     assertThat(reviewers.get(1).email).isEqualTo("non.existing.2@example.com");
     assertThat(reviewers.get(1)._accountId).isNull();
+  }
+
+  @Test
+  public void pushForMasterWithReviewerByEmailWithOneAccountInactive() throws Exception {
+    ConfigInput conf = new ConfigInput();
+    conf.enableReviewerByEmail = InheritableBoolean.TRUE;
+    gApi.projects().name(project.get()).config(conf);
+
+    TestAccount u1 = accountCreator.create("some.user", "some.user@example.com", "Some User", null);
+
+    // Delete the MailTo external ID from u1. We want to create u2 with the same externalId
+    // and without this, the account creation for u2 fails with
+    // com.google.gerrit.server.account.externalids.DuplicateExternalIdKeyException
+    ImmutableList<ExternalId> ids =
+        accounts.get(u1.id()).get().externalIds().stream()
+            .filter(id -> id.isScheme(ExternalId.SCHEME_MAILTO))
+            .collect(toImmutableList());
+    for (ExternalId externalId : ids) {
+      accountsUpdateProvider
+          .get()
+          .update("Delete External ID", u1.id(), u -> u.deleteExternalId(externalId));
+    }
+
+    TestAccount u2 =
+        accountCreator.create("some.user2", "some.user@example.com", "Some User2", null);
+
+    gApi.accounts().id(u1.id().get()).setActive(false);
+
+    PushOneCommit.Result r = pushTo("refs/for/master%r=some.user@example.com");
+    r.assertOkStatus();
+
+    ChangeInfo ci = get(r.getChangeId(), DETAILED_LABELS);
+    ImmutableList<AccountInfo> reviewers =
+        firstNonNull(ci.reviewers.get(ReviewerState.REVIEWER), ImmutableList.<AccountInfo>of())
+            .stream()
+            .sorted(comparing((AccountInfo a) -> a.email))
+            .collect(toImmutableList());
+
+    assertThat(reviewers).hasSize(1);
+    assertThat(reviewers.get(0)._accountId).isEqualTo(u2.id().get());
   }
 
   @Test
@@ -1656,6 +1701,65 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
     PushOneCommit.Result r2 = push.to("refs/for/otherBranch");
     r2.assertOkStatus();
     assertTwoChangesWithSameRevision(r);
+  }
+
+  @Test
+  public void
+      createNewChangeForAllNotInTarget_PushSameCommitToTwoBranchesAbandonTheChangeInOneBranchAndThenMergeTheCommitIntoIt()
+          throws Exception {
+    enableCreateNewChangeForAllNotInTarget();
+
+    RevCommit initialHead =
+        testRepo.getRevWalk().parseCommit(testRepo.getRepository().resolve("HEAD"));
+
+    // Create a stable branch.
+    BranchInput in = new BranchInput();
+    in.revision = projectOperations.project(project).getHead("master").name();
+    gApi.projects().name(project.get()).branch("stable").create(in);
+
+    // Push a change to the stable branch
+    PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo);
+    PushOneCommit.Result r = push.to("refs/for/stable");
+    r.assertOkStatus();
+    Change.Id changeIdStable = r.getChange().change().getId();
+
+    // Push the same commits to the master branch
+    PushOneCommit.Result r2 = push.to("refs/for/master");
+    r2.assertOkStatus();
+    assertTwoChangesWithSameRevision(r);
+
+    // Get the change ID of the change that was pushed to the master branch.
+    // Note, we cannot use "r2.getChange().change().getId()" because this method queries changes by
+    // the Change-Id which find 2 changes and then the method fails.
+    Change.Id changeIdMaster =
+        Iterables.getOnlyElement(
+                queryProvider
+                    .get()
+                    .byBranchKey(
+                        BranchNameKey.create(project, "master"), Change.key(r2.getChangeId())))
+            .getId();
+
+    // Submit the change for the stable branch
+    gApi.changes().id(project.get(), changeIdStable.get()).current().review(ReviewInput.approve());
+    gApi.changes().id(project.get(), changeIdStable.get()).current().submit();
+
+    // Abandon the change for the master branch
+    gApi.changes().id(project.get(), changeIdMaster.get()).abandon();
+
+    testRepo.reset(initialHead);
+
+    // Merge stable back into master and push for review.
+    r =
+        pushFactory
+            .create(admin.newIdent(), testRepo)
+            .setParents(ImmutableList.of(initialHead, r.getCommit()))
+            .to("refs/for/master");
+    r.assertOkStatus();
+    Change.Id changeIdMerge = r.getChange().change().getId();
+
+    // Submit the merge change
+    gApi.changes().id(project.get(), changeIdMerge.get()).current().review(ReviewInput.approve());
+    gApi.changes().id(project.get(), changeIdMerge.get()).current().submit();
   }
 
   @Test
@@ -2673,70 +2777,25 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
         .isEqualTo(Iterables.getLast(commits).name());
   }
 
-  @Test
-  public void aclInfoIsReturnedIfPushFailsDueToAPermissionError() throws Exception {
-    String master = "refs/heads/master";
-
-    projectOperations
-        .project(project)
-        .forUpdate()
-        .add(block(Permission.PUSH).ref(master).group(REGISTERED_USERS))
-        .update();
-
-    // without VIEW_ACCESS capability no ACL info is returned
-    TestRepository<?> userRepo = cloneProject(project, user);
-    userRepo
-        .branch("HEAD")
-        .commit()
-        .message("New Commit 1")
-        .author(user.newIdent())
-        .committer(user.newIdent())
-        .insertChangeId()
-        .create();
-    PushResult pushResult = pushHead(userRepo, master);
-    assertPushRejected(pushResult, master, "prohibited by Gerrit: not permitted: update");
-    assertThat(pushResult.getMessages()).doesNotContain("ACL info");
-
-    // with VIEW_ACCESS capability an ACL info is returned when the request fails due to a
-    // permission error
-    projectOperations
-        .allProjectsForUpdate()
-        .add(allowCapability(GlobalCapability.VIEW_ACCESS).group(REGISTERED_USERS))
-        .update();
-    pushResult = pushHead(userRepo, master);
-    assertPushRejected(pushResult, master, "prohibited by Gerrit: not permitted: update");
-    assertThat(pushResult.getMessages())
-        .contains(
-            String.format(
-                "ACL info:\n"
-                    + "* '%s' cannot perform 'push' with force=false on project '%s'"
-                    + " for ref '%s' because this permission is blocked",
-                user.username(), project, master));
-
-    // with VIEW_ACCESS capability no ACL info is returned when the request doesn't fail due to a
-    // permission error
-    projectOperations
-        .project(project)
-        .forUpdate()
-        .add(allow(Permission.PUSH).ref(master).group(REGISTERED_USERS))
-        .update();
-    pushResult = pushHead(userRepo, master);
-    assertPushOk(pushResult, master);
-    assertThat(pushResult.getMessages()).doesNotContain("ACL info");
-  }
-
   private static class TestValidator implements CommitValidationListener {
     private final AtomicInteger count = new AtomicInteger();
+    private final String validatorName;
     private final boolean validateAll;
 
     @Nullable private CommitReceivedEvent receivedEvent;
 
-    TestValidator(boolean validateAll) {
+    TestValidator(String validatorName, boolean validateAll) {
+      this.validatorName = validatorName;
       this.validateAll = validateAll;
     }
 
     TestValidator() {
-      this(false);
+      this(TestValidator.class.getName(), false);
+    }
+
+    @Override
+    public String getValidatorName() {
+      return validatorName;
     }
 
     @Override
@@ -2761,26 +2820,6 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
     }
   }
 
-  private static class TestPluginPushOption implements PluginPushOption {
-    private final String name;
-    private final String description;
-
-    TestPluginPushOption(String name, String description) {
-      this.name = name;
-      this.description = description;
-    }
-
-    @Override
-    public String getName() {
-      return name;
-    }
-
-    @Override
-    public String getDescription() {
-      return description;
-    }
-  }
-
   private static class TopicValidator implements TopicEditedListener {
     private final AtomicInteger count = new AtomicInteger();
 
@@ -2797,7 +2836,7 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
   @Test
   public void skipValidation() throws Exception {
     String master = "refs/heads/master";
-    TestValidator validator = new TestValidator();
+    TestValidator validator = new TestValidator("validator1", /* validateAll= */ false);
     try (Registration registration = extensionRegistry.newRegistration().add(validator)) {
       // Validation listener is called on normal push
       PushOneCommit push =
@@ -2826,7 +2865,7 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
 
       // Validation listener that needs to validate all commits gets called even
       // when the skip option is used.
-      TestValidator validator2 = new TestValidator(true);
+      TestValidator validator2 = new TestValidator("validator2", /* validateAll= */ true);
       try (Registration registration2 = extensionRegistry.newRegistration().add(validator2)) {
         PushOneCommit push4 =
             pushFactory.create(admin.newIdent(), testRepo, "change2", "b.txt", "content");
@@ -2844,8 +2883,8 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
   @Test
   public void pushOptionsArePassedToCommitValidationListener() throws Exception {
     TestValidator validator = new TestValidator();
-    PluginPushOption fooOption = new TestPluginPushOption("foo", "some description");
-    PluginPushOption barOption = new TestPluginPushOption("bar", "other description");
+    PluginPushOption fooOption = new TestPluginPushOption("foo", "some description", true);
+    PluginPushOption barOption = new TestPluginPushOption("bar", "other description", true);
     try (Registration registration =
         extensionRegistry.newRegistration().add(validator).add(fooOption).add(barOption)) {
       PushOneCommit push =
@@ -2877,8 +2916,8 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
 
   @Test
   public void pluginPushOptionsHelp() throws Exception {
-    PluginPushOption fooOption = new TestPluginPushOption("foo", "some description");
-    PluginPushOption barOption = new TestPluginPushOption("bar", "other description");
+    PluginPushOption fooOption = new TestPluginPushOption("foo", "some description", true);
+    PluginPushOption barOption = new TestPluginPushOption("bar", "other description", true);
     try (Registration registration =
         extensionRegistry.newRegistration().add(fooOption).add(barOption)) {
       PushOneCommit push =
@@ -3246,6 +3285,98 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
   public void pushWithInvalidBaseIsRejected() throws Exception {
     PushOneCommit.Result r = pushTo("refs/for/master%base=invalid");
     r.assertErrorStatus("expected SHA1 for option --base: invalid");
+  }
+
+  @Test
+  public void commitValidationInfoListenerIsInvokedOnChangeCreation() throws Exception {
+    TestCommitValidationInfoListener testCommitValidationInfoListener =
+        new TestCommitValidationInfoListener();
+    TestCommitValidationListener testCommitValidationListener = new TestCommitValidationListener();
+    try (Registration registration =
+        extensionRegistry
+            .newRegistration()
+            .add(testCommitValidationInfoListener)
+            .add(testCommitValidationListener)) {
+      PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo);
+
+      // Plugins can define push options that skip plugin-specific validators. To verify that push
+      // options are passed to the CommitValidationInfoListener's (in receiveEvent.pushOptions) we
+      // set an arbitrary push option here. Note this must be a push option that is known to Gerrit,
+      // either because Gerrit defines it are because the plugin did register it via the
+      // PluginPushOption extension point. To avoid the overhead of registering a PluginPushOption,
+      // we use the 'topic' push option for testing this.
+      push.setPushOptions(ImmutableList.of("topic=myTopic"));
+
+      PushOneCommit.Result r = push.to("refs/for/master");
+      r.assertOkStatus();
+
+      assertThat(testCommitValidationInfoListener.validationInfoByValidator)
+          .containsKey(TestCommitValidationListener.class.getName());
+      assertThat(
+              testCommitValidationInfoListener
+                  .validationInfoByValidator
+                  .get(TestCommitValidationListener.class.getName())
+                  .status())
+          .isEqualTo(CommitValidationInfo.Status.PASSED);
+      assertThat(testCommitValidationInfoListener.receiveEvent.commit.name())
+          .isEqualTo(r.getCommit().name());
+      assertThat(testCommitValidationInfoListener.receiveEvent.pushOptions)
+          .containsExactly("topic", "myTopic");
+      assertThat(testCommitValidationInfoListener.patchSetId).isEqualTo(r.getPatchSetId());
+      assertThat(testCommitValidationInfoListener.hasChangeModificationRefContext).isTrue();
+      assertThat(testCommitValidationInfoListener.hasDirectPushRefContext).isFalse();
+    }
+  }
+
+  @Test
+  public void commitValidationInfoListenerIsInvokedOnPatchSetCreation() throws Exception {
+    PushOneCommit.Result r = pushTo("refs/for/master");
+    r.assertOkStatus();
+
+    TestCommitValidationInfoListener testCommitValidationInfoListener =
+        new TestCommitValidationInfoListener();
+    TestCommitValidationListener testCommitValidationListener = new TestCommitValidationListener();
+    try (Registration registration =
+        extensionRegistry
+            .newRegistration()
+            .add(testCommitValidationInfoListener)
+            .add(testCommitValidationListener)) {
+      PushOneCommit push =
+          pushFactory.create(
+              admin.newIdent(),
+              testRepo,
+              PushOneCommit.SUBJECT,
+              "b.txt",
+              "anotherContent",
+              r.getChangeId());
+
+      // Plugins can define push options that skip plugin-specific validators. To verify that push
+      // options are passed to the CommitValidationInfoListener's (in receiveEvent.pushOptions) we
+      // set an arbitrary push option here. Note this must be a push option that is known to Gerrit,
+      // either because Gerrit defines it are because the plugin did register it via the
+      // PluginPushOption extension point. To avoid the overhead of registering a PluginPushOption,
+      // we use the 'topic' push option for testing this.
+      push.setPushOptions(ImmutableList.of("topic=myTopic"));
+
+      r = push.to("refs/for/master");
+      r.assertOkStatus();
+
+      assertThat(testCommitValidationInfoListener.validationInfoByValidator)
+          .containsKey(TestCommitValidationListener.class.getName());
+      assertThat(
+              testCommitValidationInfoListener
+                  .validationInfoByValidator
+                  .get(TestCommitValidationListener.class.getName())
+                  .status())
+          .isEqualTo(CommitValidationInfo.Status.PASSED);
+      assertThat(testCommitValidationInfoListener.receiveEvent.commit.name())
+          .isEqualTo(r.getCommit().name());
+      assertThat(testCommitValidationInfoListener.receiveEvent.pushOptions)
+          .containsExactly("topic", "myTopic");
+      assertThat(testCommitValidationInfoListener.patchSetId).isEqualTo(r.getPatchSetId());
+      assertThat(testCommitValidationInfoListener.hasChangeModificationRefContext).isTrue();
+      assertThat(testCommitValidationInfoListener.hasDirectPushRefContext).isFalse();
+    }
   }
 
   private DraftInput newDraft(String path, int line, String message) {

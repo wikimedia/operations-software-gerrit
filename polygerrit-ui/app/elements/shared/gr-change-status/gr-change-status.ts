@@ -65,6 +65,7 @@ export class GrChangeStatus extends LitElement {
         :host(.abandoned) .chip {
           background-color: var(--status-abandoned);
           color: var(--status-abandoned);
+          text-decoration: line-through;
         }
         :host(.wip) .chip {
           background-color: var(--status-wip);
@@ -81,6 +82,7 @@ export class GrChangeStatus extends LitElement {
         }
         :host(.active) .chip {
           background-color: var(--status-active);
+          --status-text-color: black;
           color: var(--status-active);
         }
         :host(.ready-to-submit) .chip {

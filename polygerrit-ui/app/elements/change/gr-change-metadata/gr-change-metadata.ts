@@ -369,7 +369,7 @@ export class GrChangeMetadata extends LitElement {
       link
       class="show-all-button"
       @click=${this.onShowAllClick}
-      >${this.showAllSections ? 'Show less' : 'Show all'}
+      >${this.showAllSections ? 'Show Less' : 'Show All'}
       <gr-icon icon="expand_more" ?hidden=${this.showAllSections}></gr-icon>
       <gr-icon icon="expand_less" ?hidden=${!this.showAllSections}></gr-icon>
     </gr-button>`;
@@ -512,10 +512,8 @@ export class GrChangeMetadata extends LitElement {
       <span class="title">Reviewers</span>
       <span class="value">
         <gr-reviewer-list
-          .change=${this.change}
           ?mutable=${this.mutable}
           reviewers-only
-          .account=${this.account}
         ></gr-reviewer-list>
       </span>
     </section>`;
@@ -525,12 +523,7 @@ export class GrChangeMetadata extends LitElement {
     return html`<section class=${this.computeDisplayState(Metadata.CC)}>
       <span class="title">CC</span>
       <span class="value">
-        <gr-reviewer-list
-          .change=${this.change}
-          ?mutable=${this.mutable}
-          ccs-only
-          .account=${this.account}
-        ></gr-reviewer-list>
+        <gr-reviewer-list ?mutable=${this.mutable} ccs-only></gr-reviewer-list>
       </span>
     </section>`;
   }
@@ -768,7 +761,6 @@ export class GrChangeMetadata extends LitElement {
           !this.hashtagReadOnly,
           () => html`
             <gr-editable-label
-              uppercase
               labelText="Add a hashtag"
               .placeholder=${this.computeHashtagPlaceholder()}
               .readOnly=${this.hashtagReadOnly}

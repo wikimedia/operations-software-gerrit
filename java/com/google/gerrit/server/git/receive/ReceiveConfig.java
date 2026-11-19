@@ -24,11 +24,12 @@ import com.google.inject.Singleton;
 import org.eclipse.jgit.lib.Config;
 
 @Singleton
-class ReceiveConfig {
+public class ReceiveConfig {
   final boolean checkMagicRefs;
   final boolean checkReferencedObjectsAreReachable;
   final int maxBatchCommits;
   final boolean disablePrivateChanges;
+  final int advertiseOpenChangesRefs;
   private final int systemMaxBatchChanges;
   private final AccountLimits.Factory limitsFactory;
 
@@ -40,6 +41,7 @@ class ReceiveConfig {
     maxBatchCommits = config.getInt("receive", null, "maxBatchCommits", 10000);
     systemMaxBatchChanges = config.getInt("receive", "maxBatchChanges", 0);
     disablePrivateChanges = config.getBoolean("change", null, "disablePrivateChanges", false);
+    advertiseOpenChangesRefs = config.getInt("receive", "advertiseOpenChangesRefs", 32);
     this.limitsFactory = limitsFactory;
   }
 

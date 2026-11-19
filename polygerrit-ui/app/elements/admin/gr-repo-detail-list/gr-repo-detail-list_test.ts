@@ -86,6 +86,76 @@ function createTagsList(n: number) {
 }
 
 suite('gr-repo-detail-list', () => {
+  suite('creation button visibility', () => {
+    for (const {detail, loggedIn, canAdd, visible} of [
+      {
+        detail: RepoDetailView.BRANCHES,
+        loggedIn: true,
+        canAdd: true,
+        visible: true,
+      },
+      {
+        detail: RepoDetailView.BRANCHES,
+        loggedIn: true,
+        canAdd: false,
+        visible: false,
+      },
+      {
+        detail: RepoDetailView.BRANCHES,
+        loggedIn: true,
+        canAdd: undefined,
+        visible: false,
+      },
+      {
+        detail: RepoDetailView.BRANCHES,
+        loggedIn: false,
+        canAdd: true,
+        visible: false,
+      },
+      {
+        detail: RepoDetailView.TAGS,
+        loggedIn: true,
+        canAdd: undefined,
+        visible: true,
+      },
+      {
+        detail: RepoDetailView.TAGS,
+        loggedIn: false,
+        canAdd: undefined,
+        visible: false,
+      },
+    ] as const) {
+      test(`${detail}, logged in: ${loggedIn}, can_add: ${canAdd}`, async () => {
+        stubRestApi('getRepoAccess').resolves({
+          test: {
+            revision: 'xxxx',
+            local: {},
+            owner_of: [],
+            groups: {},
+            config_web_links: [],
+            can_add: canAdd,
+          },
+        });
+        const element = await fixture<GrRepoDetailList>(
+          html`<gr-repo-detail-list></gr-repo-detail-list>`
+        );
+        element.repo = 'test' as RepoName;
+        element.detailType = detail;
+        element.loggedIn = loggedIn;
+        await element.determineRepoAccess(element.repo);
+        await element.updateComplete;
+        const list = queryAndAssert<GrListView>(element, 'gr-list-view');
+        await list.updateComplete;
+        assert.equal(
+          queryAndAssert(list, '#createNewContainer').classList.contains(
+            'show'
+          ),
+          visible
+        );
+      });
+    }
+  });
+
   suite('Branches', () => {
     let element: GrRepoDetailList;
     let branches: BranchInfo[];
@@ -155,7 +225,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -222,7 +292,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -291,7 +361,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -360,7 +430,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -429,7 +499,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -498,7 +568,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -567,7 +637,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -636,7 +706,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -705,7 +775,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -774,7 +844,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -843,7 +913,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -912,7 +982,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -981,7 +1051,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -1050,7 +1120,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -1119,7 +1189,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -1188,7 +1258,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -1257,7 +1327,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -1326,7 +1396,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -1395,7 +1465,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -1464,7 +1534,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -1533,7 +1603,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -1602,7 +1672,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -1671,7 +1741,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -1740,7 +1810,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -1809,7 +1879,7 @@ suite('gr-repo-detail-list', () => {
                           role="button"
                           tabindex="0"
                         >
-                          edit
+                          Edit
                         </gr-button>
                         <iron-input class="editItem">
                           <input />
@@ -1926,7 +1996,7 @@ suite('gr-repo-detail-list', () => {
             },
           } as RepoAccessInfoMap)
         );
-        await element.determineIfOwner('test' as RepoName);
+        await element.determineRepoAccess('test' as RepoName);
         assert.equal(element.isOwner, false);
         assert.equal(
           getComputedStyle(
@@ -1984,7 +2054,7 @@ suite('gr-repo-detail-list', () => {
           element,
           'handleSaveRevision'
         );
-        await element.determineIfOwner('test' as RepoName);
+        await element.determineRepoAccess('test' as RepoName);
         assert.equal(element.isOwner, true);
         // The revision container for non-editing enabled row is not visible.
         assert.equal(getComputedStyle(revisionNoEditing).display, 'none');
@@ -1997,7 +2067,7 @@ suite('gr-repo-detail-list', () => {
           'none'
         );
 
-        // The revision and edit button are visible.
+        // The revision and Edit button are visible.
         assert.notEqual(getComputedStyle(revisionWithEditing).display, 'none');
         assert.notEqual(getComputedStyle(editBtn).display, 'none');
 
@@ -2013,7 +2083,7 @@ suite('gr-repo-detail-list', () => {
 
         editBtn.click();
         await element.updateComplete;
-        // The revision and edit button are not visible.
+        // The revision and Edit button are not visible.
         assert.equal(getComputedStyle(revisionWithEditing).display, 'none');
         assert.equal(getComputedStyle(editBtn).display, 'none');
 

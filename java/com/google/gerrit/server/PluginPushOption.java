@@ -12,7 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package com.google.gerrit.server.git.receive;
+package com.google.gerrit.server;
+
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.server.notedb.ChangeNotes;
 
 /**
  * Push option that can be specified on push.
@@ -26,4 +30,23 @@ public interface PluginPushOption {
 
   /** The description of the push option. */
   public String getDescription();
+
+  /**
+   * Allows implementers to control if the option is enabled at the change level
+   *
+   * @param changeNotes the change for which it should be checked if the option is enabled
+   */
+  default boolean isOptionEnabled(ChangeNotes changeNotes) {
+    return false;
+  }
+
+  /**
+   * Allows implementers to control if the option is enabled at the project + branch level
+   *
+   * @param project the project for which it should be checked if the option is enabled
+   * @param branch the branch for which it should be checked if the option is enabled
+   */
+  default boolean isOptionEnabled(Project.NameKey project, BranchNameKey branch) {
+    return false;
+  }
 }

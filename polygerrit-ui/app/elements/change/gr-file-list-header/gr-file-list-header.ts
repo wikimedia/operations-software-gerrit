@@ -207,6 +207,8 @@ export class GrFileListHeader extends LitElement {
         }
         .fileViewActions gr-button {
           margin: 0;
+        }
+        .fileViewActions {
           --gr-button-padding: 2px 4px;
         }
         .fileViewActions,
@@ -215,7 +217,7 @@ export class GrFileListHeader extends LitElement {
           display: flex;
         }
         .label {
-          font-weight: var(--font-weight-bold);
+          font-weight: var(--font-weight-medium);
           margin-right: 24px;
         }
         gr-commit-info,

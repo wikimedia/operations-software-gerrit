@@ -71,6 +71,7 @@ import com.google.gerrit.acceptance.AccountIndexedCounter;
 import com.google.gerrit.acceptance.ExtensionRegistry;
 import com.google.gerrit.acceptance.ExtensionRegistry.Registration;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.acceptance.PushOneCommit.Result;
 import com.google.gerrit.acceptance.Sandboxed;
 import com.google.gerrit.acceptance.TestAccount;
 import com.google.gerrit.acceptance.UseClockStep;
@@ -173,6 +174,7 @@ import com.google.gerrit.server.project.RefPattern;
 import com.google.gerrit.server.query.account.InternalAccountQuery;
 import com.google.gerrit.server.restapi.account.GetCapabilities;
 import com.google.gerrit.server.update.RetryHelper;
+import com.google.gerrit.server.update.RetryListener;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gerrit.server.validators.AccountActivationValidationListener;
 import com.google.gerrit.server.validators.ValidationException;
@@ -267,6 +269,7 @@ public class AccountIT extends AbstractDaemonTest {
   @Inject private StalenessChecker stalenessChecker;
   @Inject private VersionedAuthorizedKeys.Accessor authorizedKeys;
   @Inject private PluginSetContext<ExceptionHook> exceptionHooks;
+  @Inject private PluginSetContext<RetryListener> retryListeners;
   @Inject private ExternalIdKeyFactory externalIdKeyFactory;
   @Inject private ExternalIdFactoryNoteDbImpl externalIdFactoryNoteDbImpl;
   @Inject private AuthConfig authConfig;
@@ -587,9 +590,101 @@ public class AccountIT extends AbstractDaemonTest {
     AccountIndexedCounter accountIndexedCounter = getAccountIndexedCounter();
     try (Registration registration =
         extensionRegistry.newRegistration().add(accountIndexedCounter)) {
-      AccountInfo info = gApi.accounts().id(admin.id().get()).get();
-      AccountInfo infoByIntId = gApi.accounts().id(info._accountId).get();
-      assertThat(info.name).isEqualTo(infoByIntId.name);
+      assertAccountFound("admin");
+      accountIndexedCounter.assertNoReindex();
+    }
+  }
+
+  @Test
+  @GerritConfig(name = "accounts.caseInsensitiveLocalPart", value = "example.com")
+  public void getByEmailIdCaseInsensitive() throws Exception {
+    AccountIndexedCounter accountIndexedCounter = new AccountIndexedCounter();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(accountIndexedCounter)) {
+
+      String email = "admin@example.com";
+      assertAccountFound(email);
+      assertAccountFound(email.toUpperCase(Locale.US));
+
+      accountIndexedCounter.assertNoReindex();
+    }
+  }
+
+  @Test
+  public void getByEmailIdCaseSensitive() throws Exception {
+    AccountIndexedCounter accountIndexedCounter = new AccountIndexedCounter();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(accountIndexedCounter)) {
+
+      String email = "admin@example.com";
+      assertAccountFound(email);
+      assertAccountNotFound(email.toUpperCase(Locale.US));
+
+      accountIndexedCounter.assertNoReindex();
+    }
+  }
+
+  @Test
+  @GerritConfig(name = "accounts.caseInsensitiveLocalPart", value = "example.com")
+  public void lookUpByEmailCaseInsensitive() throws Exception {
+    assertThat(emails.getAccountFor(admin.email().toUpperCase(Locale.US))).isNotEmpty();
+  }
+
+  @Test
+  public void lookUpByEmailCaseSensitive() throws Exception {
+    assertThat(emails.getAccountFor(admin.email().toUpperCase(Locale.US))).isEmpty();
+  }
+
+  @Test
+  @GerritConfig(name = "accounts.caseInsensitiveLocalPart", value = "example.com")
+  public void lookUpByEmailsCaseInsensitive() throws Exception {
+    assertThat(emails.getAccountsFor(admin.email().toUpperCase(Locale.US))).isNotEmpty();
+  }
+
+  @Test
+  public void lookUpByEmailsCaseSensitive() throws Exception {
+    assertThat(emails.getAccountsFor(admin.email().toUpperCase(Locale.US))).isEmpty();
+  }
+
+  private void assertAccountNotFound(String mail) {
+    ResourceNotFoundException thrown =
+        assertThrows(ResourceNotFoundException.class, () -> gApi.accounts().id(mail));
+    assertThat(thrown).hasMessageThat().isEqualTo("Account '" + mail + "' not found");
+  }
+
+  @Test
+  @GerritConfig(name = "accounts.caseInsensitiveLocalPart", value = "example.com")
+  public void getByNameAndEmailIdCaseInsensitive() throws Exception {
+    AccountIndexedCounter accountIndexedCounter = new AccountIndexedCounter();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(accountIndexedCounter)) {
+
+      String nameAndEmail = "Admin <admin@example.com>";
+      assertAccountFound(nameAndEmail);
+      assertAccountFound(nameAndEmail.toUpperCase(Locale.US));
+
+      accountIndexedCounter.assertNoReindex();
+    }
+  }
+
+  @CanIgnoreReturnValue
+  private AccountInfo assertAccountFound(String id) throws RestApiException {
+    AccountInfo infoByEmailLowerCase = gApi.accounts().id(id).get();
+    AccountInfo infoByIntId = gApi.accounts().id(infoByEmailLowerCase._accountId).get();
+    assertThat(infoByEmailLowerCase.name).isEqualTo(infoByIntId.name);
+    return infoByIntId;
+  }
+
+  @Test
+  public void getByNameAndEmailIdCaseSensitive() throws Exception {
+    AccountIndexedCounter accountIndexedCounter = new AccountIndexedCounter();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(accountIndexedCounter)) {
+
+      String nameAndEmail = "Admin <admin@example.com>";
+      assertAccountFound(nameAndEmail);
+      assertAccountNotFound(nameAndEmail.toUpperCase(Locale.US));
+
       accountIndexedCounter.assertNoReindex();
     }
   }
@@ -2293,6 +2388,7 @@ public class AccountIT extends AbstractDaemonTest {
                 null,
                 null,
                 exceptionHooks,
+                retryListeners,
                 r ->
                     r.withStopStrategy(StopStrategies.stopAfterAttempt(status.size()))
                         .withBlockStrategy(noSleepBlockStrategy)));
@@ -2701,6 +2797,23 @@ public class AccountIT extends AbstractDaemonTest {
   }
 
   @Test
+  @UseClockStep
+  public void updateDrafts() throws Exception {
+    try {
+      PushOneCommit.Result r1 = createChange();
+
+      requestScopeOperations.setApiUser(user.id());
+      CommentInfo draft = createDraft(r1, PushOneCommit.FILE_NAME, "draft creation");
+      updateDraft(r1, draft, "draft update");
+      assertThat(gApi.changes().id(r1.getChangeId()).current().draftsAsList()).hasSize(1);
+      assertThat(gApi.changes().id(r1.getChangeId()).current().draftsAsList().get(0).message)
+          .isEqualTo("draft update");
+    } finally {
+      cleanUpDrafts();
+    }
+  }
+
+  @Test
   public void userCanGenerateNewHttpPassword() throws Exception {
     sender.clear();
     String newPassword = gApi.accounts().self().generateHttpPassword();
@@ -2966,12 +3079,22 @@ public class AccountIT extends AbstractDaemonTest {
         .isEqualTo(postUpdateStatus);
   }
 
-  private void createDraft(PushOneCommit.Result r, String path, String message) throws Exception {
+  @CanIgnoreReturnValue
+  private CommentInfo createDraft(Result r, String path, String message) throws Exception {
     DraftInput in = new DraftInput();
     in.path = path;
     in.line = 1;
     in.message = message;
-    gApi.changes().id(r.getChangeId()).current().createDraft(in);
+    return gApi.changes().id(r.getChangeId()).current().createDraft(in).get();
+  }
+
+  @CanIgnoreReturnValue
+  private CommentInfo updateDraft(Result r, CommentInfo orig, String newMessage) throws Exception {
+    DraftInput in = new DraftInput();
+    in.path = orig.path;
+    in.line = orig.line;
+    in.message = newMessage;
+    return gApi.changes().id(r.getChangeId()).current().draft(orig.id).update(in);
   }
 
   private void cleanUpDrafts() throws Exception {
@@ -3512,6 +3635,28 @@ public class AccountIT extends AbstractDaemonTest {
   }
 
   @Test
+  @GerritConfig(name = "accounts.enableDelete", value = "false")
+  public void deleteAccount_throwsForSelfIfConfigenableDeleteIsDisabled() throws Exception {
+    TestAccount deleted = accountCreator.createValid(name("deleted"));
+    requestScopeOperations.setApiUser(deleted.id());
+    ResourceNotFoundException thrown =
+        assertThrows(
+            ResourceNotFoundException.class, () -> gApi.accounts().id(deleted.id().get()).delete());
+    assertThat(thrown).hasMessageThat().isEqualTo("Delete account is not enabled");
+  }
+
+  @Test
+  @GerritConfig(name = "accounts.enableDelete", value = "false")
+  public void deleteAccount_throwsForOthersIfConfigenableDeleteIsDisabled() throws Exception {
+    TestAccount deleted = accountCreator.createValid(name("deleted"));
+    requestScopeOperations.setApiUser(user.id());
+    ResourceNotFoundException thrown =
+        assertThrows(
+            ResourceNotFoundException.class, () -> gApi.accounts().id(deleted.id().get()).delete());
+    assertThat(thrown).hasMessageThat().isEqualTo("Delete account is not enabled");
+  }
+
+  @Test
   public void getOwnAccountState() throws Exception {
     String email = "preferred@example.com";
     String name = "Foo";
@@ -3877,6 +4022,7 @@ public class AccountIT extends AbstractDaemonTest {
             null,
             null,
             exceptionHooks,
+            retryListeners,
             r -> r.withBlockStrategy(noSleepBlockStrategy)));
   }
 

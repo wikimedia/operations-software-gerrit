@@ -15,6 +15,7 @@
 package com.google.gerrit.acceptance.api.change;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.acceptance.TestExtensions.TestCommitValidationListener;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
@@ -53,10 +54,6 @@ import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.server.ChangeUtil;
-import com.google.gerrit.server.events.CommitReceivedEvent;
-import com.google.gerrit.server.git.validators.CommitValidationException;
-import com.google.gerrit.server.git.validators.CommitValidationListener;
-import com.google.gerrit.server.git.validators.CommitValidationMessage;
 import com.google.gerrit.server.permissions.PermissionDeniedException;
 import com.google.gerrit.testing.FakeEmailSender.Message;
 import com.google.inject.Inject;
@@ -208,6 +205,11 @@ public class RevertIT extends AbstractDaemonTest {
     assertThat(revertChange.messages).hasSize(1);
     assertThat(revertChange.messages.iterator().next().message).isEqualTo("Uploaded patch set 1.");
     assertThat(revertChange.revertOf).isEqualTo(gApi.changes().id(r.getChangeId()).get()._number);
+
+    assertThat(revertChange.getCurrentRevision().conflicts).isNotNull();
+    assertThat(revertChange.getCurrentRevision().conflicts.containsConflicts).isFalse();
+    assertThat(revertChange.getCurrentRevision().conflicts.ours).isNull();
+    assertThat(revertChange.getCurrentRevision().conflicts.theirs).isNull();
   }
 
   @Test
@@ -228,12 +230,50 @@ public class RevertIT extends AbstractDaemonTest {
     List<ChangeMessageInfo> sourceMessages =
         new ArrayList<>(gApi.changes().id(r.getChangeId()).get().messages);
     assertThat(sourceMessages).hasSize(3);
-    // Publishing creates a revert message
+
+    // Marking the revert change as ready creates a revert message on the source change.
     gApi.changes().id(revertChange.changeId).setReadyForReview();
     sourceMessages = new ArrayList<>(gApi.changes().id(r.getChangeId()).get().messages);
     assertThat(sourceMessages).hasSize(4);
     assertThat(sourceMessages.get(3).message)
         .isEqualTo("Created a revert of this change as " + revertChange.changeId);
+    assertThat(sourceMessages.get(3).author._accountId).isEqualTo(admin.id().get());
+  }
+
+  @Test
+  public void revertChangeWithWipMarkAsReadyByOtherUser() throws Exception {
+    PushOneCommit.Result r = createChange();
+    gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).review(ReviewInput.approve());
+    gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).submit();
+    RevertInput in = createWipRevertInput();
+
+    ChangeInfo revertChange = gApi.changes().id(r.getChangeId()).revert(in).get();
+
+    assertThat(revertChange.workInProgress).isTrue();
+    // expected messages on source change:
+    // 1. Uploaded patch set 1.
+    // 2. Patch Set 1: Code-Review+2
+    // 3. Change has been successfully merged by Administrator
+    // No "reverted" message is expected.
+    List<ChangeMessageInfo> sourceMessages =
+        new ArrayList<>(gApi.changes().id(r.getChangeId()).get().messages);
+    assertThat(sourceMessages).hasSize(3);
+
+    // Marking the revert change as ready creates a revert message on the source change.
+    // The revert message is authored by the user that created the revert, not the user that marked
+    // the revert change as ready.
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.TOGGLE_WORK_IN_PROGRESS_STATE).ref("refs/*").group(REGISTERED_USERS))
+        .update();
+    requestScopeOperations.setApiUser(user.id());
+    gApi.changes().id(revertChange.changeId).setReadyForReview();
+    sourceMessages = new ArrayList<>(gApi.changes().id(r.getChangeId()).get().messages);
+    assertThat(sourceMessages).hasSize(4);
+    assertThat(sourceMessages.get(3).message)
+        .isEqualTo("Created a revert of this change as " + revertChange.changeId);
+    assertThat(sourceMessages.get(3).author._accountId).isEqualTo(admin.id().get());
   }
 
   @Test
@@ -527,7 +567,12 @@ public class RevertIT extends AbstractDaemonTest {
       u.save();
     }
 
-    String expected = "project state " + ProjectState.READ_ONLY + " does not permit write";
+    String expected =
+        "project "
+            + project.get()
+            + " has state "
+            + ProjectState.READ_ONLY
+            + " does not permit write";
     ResourceConflictException thrown =
         assertThrows(
             ResourceConflictException.class,
@@ -565,6 +610,9 @@ public class RevertIT extends AbstractDaemonTest {
         .forUpdate()
         .add(block(Permission.READ).ref("refs/heads/master").group(REGISTERED_USERS))
         .update();
+
+    // Use a non-admin user, since admins can always see all changes.
+    requestScopeOperations.setApiUser(user.id());
     ResourceNotFoundException thrown =
         assertThrows(
             ResourceNotFoundException.class, () -> gApi.changes().id(r.getChangeId()).revert());
@@ -628,7 +676,12 @@ public class RevertIT extends AbstractDaemonTest {
       u.save();
     }
 
-    String expected = "project state " + ProjectState.READ_ONLY + " does not permit write";
+    String expected =
+        "project "
+            + project.get()
+            + " has state "
+            + ProjectState.READ_ONLY
+            + " does not permit write";
 
     // assert that if first repository has no write permissions, it will fail.
     ResourceConflictException thrown =
@@ -689,6 +742,13 @@ public class RevertIT extends AbstractDaemonTest {
   @Test
   @GerritConfig(name = "change.submitWholeTopic", value = "true")
   public void cantCreateRevertSubmissionWithoutReadPermission() throws Exception {
+    // Allow all users to revert changes.
+    projectOperations
+        .project(allProjects)
+        .forUpdate()
+        .add(allow(Permission.REVERT).ref("refs/heads/*").group(REGISTERED_USERS))
+        .update();
+
     String secondProject = "secondProject";
     projectOperations.newProject().name(secondProject).create();
     TestRepository<InMemoryRepository> secondRepo =
@@ -710,7 +770,9 @@ public class RevertIT extends AbstractDaemonTest {
         .add(block(Permission.READ).ref("refs/heads/master").group(REGISTERED_USERS))
         .update();
 
-    // assert that if first repository has no read permissions, it will fail.
+    // Assert that if first repository has no read permissions, it will fail.
+    // Use a non-admin user, since admins can always see all changes.
+    requestScopeOperations.setApiUser(user.id());
     ResourceNotFoundException resourceNotFoundException =
         assertThrows(
             ResourceNotFoundException.class, () -> gApi.changes().id(change1).revertSubmission());
@@ -950,6 +1012,12 @@ public class RevertIT extends AbstractDaemonTest {
         .isEqualTo(result.getChange().change().getChangeId());
     assertThat(revertChanges.get(0).get().topic)
         .startsWith("revert-" + result.getChange().change().getSubmissionId() + "-");
+
+    assertThat(revertChanges.get(0).get().getCurrentRevision().conflicts).isNotNull();
+    assertThat(revertChanges.get(0).get().getCurrentRevision().conflicts.containsConflicts)
+        .isFalse();
+    assertThat(revertChanges.get(0).get().getCurrentRevision().conflicts.ours).isNull();
+    assertThat(revertChanges.get(0).get().getCurrentRevision().conflicts.theirs).isNull();
   }
 
   @Test
@@ -1194,6 +1262,16 @@ public class RevertIT extends AbstractDaemonTest {
 
     assertThat(revertChanges).hasSize(2);
     assertThat(gApi.changes().id(revertChanges.get(0).id()).current().related().changes).hasSize(2);
+
+    // None of the revert changes has conflicts.
+    for (int i = 0; i < revertChanges.size(); i++) {
+      // Internally RevertSubmission either uses Revert or Cherry-Pick to do the reverts.
+      // Depending on which operation is used ours/theirs is set (if Cherry-Pick is used) or unset
+      // (if Revert is used). Hence we do not validate ours/theirs here.
+      assertThat(revertChanges.get(i).get().getCurrentRevision().conflicts).isNotNull();
+      assertThat(revertChanges.get(i).get().getCurrentRevision().conflicts.containsConflicts)
+          .isFalse();
+    }
   }
 
   @Test
@@ -1562,16 +1640,5 @@ public class RevertIT extends AbstractDaemonTest {
     RevertInput input = new RevertInput();
     input.workInProgress = true;
     return input;
-  }
-
-  private static class TestCommitValidationListener implements CommitValidationListener {
-    public CommitReceivedEvent receiveEvent;
-
-    @Override
-    public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent receiveEvent)
-        throws CommitValidationException {
-      this.receiveEvent = receiveEvent;
-      return ImmutableList.of();
-    }
   }
 }

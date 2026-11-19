@@ -41,16 +41,22 @@ import javax.inject.Inject;
 /** Access control management for a user accessing a single change. */
 public class ChangeControl {
   public interface Factory {
-    ChangeControl create(RefControl refControl, ChangeData changeData);
+    ChangeControl create(
+        ProjectControl projectControl, RefControl refControl, ChangeData changeData);
   }
 
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
+  private final ProjectControl projectControl;
   private final RefControl refControl;
   private final ChangeData changeData;
 
   @Inject
-  protected ChangeControl(@Assisted RefControl refControl, @Assisted ChangeData changeData) {
+  protected ChangeControl(
+      @Assisted ProjectControl projectControl,
+      @Assisted RefControl refControl,
+      @Assisted ChangeData changeData) {
+    this.projectControl = projectControl;
     this.refControl = refControl;
     this.changeData = changeData;
   }
@@ -202,6 +208,13 @@ public class ChangeControl {
   }
 
   private boolean isPrivateVisible(ChangeData cd) {
+    if (projectControl.isAdmin()) {
+      logger.atFine().log(
+          "%s can see private change %s because this user is an admin",
+          getUser().getLoggableName(), cd.getId());
+      return true;
+    }
+
     if (isOwner()) {
       logger.atFine().log(
           "%s can see private change %s because this user is the change owner",
@@ -292,44 +305,26 @@ public class ChangeControl {
 
     private boolean can(ChangePermission perm) throws PermissionBackendException {
       try {
-        switch (perm) {
-          case READ:
-            return isVisible();
-          case ABANDON:
-            return canAbandon();
-          case DELETE:
-            return getProjectControl().isAdmin() || refControl.canDeleteChanges(isOwner());
-          case ADD_PATCH_SET:
-            return canAddPatchSet();
-          case EDIT_DESCRIPTION:
-            return canEditDescription();
-          case EDIT_HASHTAGS:
-            return canEditHashtags();
-          case EDIT_CUSTOM_KEYED_VALUES:
-            return canEditCustomKeyedValues();
-          case EDIT_TOPIC_NAME:
-            return canEditTopicName();
-          case REBASE:
-            return canRebase();
-          case REBASE_ON_BEHALF_OF_UPLOADER:
-            return canRebaseOnBehalfOfUploader();
-          case RESTORE:
-            return canRestore();
-          case REVERT:
-            return canRevert();
-          case SUBMIT:
-            return refControl.canSubmit(isOwner());
-          case TOGGLE_WORK_IN_PROGRESS_STATE:
-            return canToggleWorkInProgressState();
-
-          case REMOVE_REVIEWER:
-          case SUBMIT_AS:
-            return refControl.canPerform(changePermissionName(perm));
-        }
+        return switch (perm) {
+          case READ -> isVisible();
+          case ABANDON -> canAbandon();
+          case DELETE -> getProjectControl().isAdmin() || refControl.canDeleteChanges(isOwner());
+          case ADD_PATCH_SET -> canAddPatchSet();
+          case EDIT_DESCRIPTION -> canEditDescription();
+          case EDIT_HASHTAGS -> canEditHashtags();
+          case EDIT_CUSTOM_KEYED_VALUES -> canEditCustomKeyedValues();
+          case EDIT_TOPIC_NAME -> canEditTopicName();
+          case REBASE -> canRebase();
+          case REBASE_ON_BEHALF_OF_UPLOADER -> canRebaseOnBehalfOfUploader();
+          case RESTORE -> canRestore();
+          case REVERT -> canRevert();
+          case SUBMIT -> refControl.canSubmit(isOwner());
+          case TOGGLE_WORK_IN_PROGRESS_STATE -> canToggleWorkInProgressState();
+          case REMOVE_REVIEWER, SUBMIT_AS -> refControl.canPerform(changePermissionName(perm));
+        };
       } catch (StorageException e) {
         throw new PermissionBackendException("unavailable", e);
       }
-      throw new PermissionBackendException(perm + " unsupported");
     }
 
     private boolean can(AbstractLabelPermission perm) {

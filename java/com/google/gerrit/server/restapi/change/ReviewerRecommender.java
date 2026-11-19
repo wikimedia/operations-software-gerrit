@@ -14,41 +14,46 @@
 
 package com.google.gerrit.server.restapi.change;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.ReviewerState;
-import com.google.gerrit.index.query.QueryParseException;
+import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.server.FanOutExecutor;
+import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountState;
+import com.google.gerrit.server.account.GroupMembers;
 import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.ReviewerSuggestion;
 import com.google.gerrit.server.change.SuggestedReviewer;
 import com.google.gerrit.server.config.GerritServerConfig;
+import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.index.change.ChangeField;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
 import com.google.gerrit.server.plugincontext.PluginMapContext;
+import com.google.gerrit.server.project.NoSuchProjectException;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gerrit.server.query.change.ChangeQueryBuilder;
+import com.google.gerrit.server.query.change.ChangePredicates;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -57,7 +62,6 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.apache.commons.lang3.mutable.MutableDouble;
-import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Config;
 
 public class ReviewerRecommender {
@@ -65,30 +69,33 @@ public class ReviewerRecommender {
 
   private static final long PLUGIN_QUERY_TIMEOUT = 500; // ms
 
-  private final ChangeQueryBuilder changeQueryBuilder;
   private final Config config;
   private final PluginMapContext<ReviewerSuggestion> reviewerSuggestionPluginMap;
   private final Provider<InternalChangeQuery> queryProvider;
+  private final Provider<IdentifiedUser> identifiedUser;
   private final ExecutorService executor;
   private final ApprovalsUtil approvalsUtil;
   private final AccountCache accountCache;
+  private final GroupMembers groupMembers;
 
   @Inject
   ReviewerRecommender(
-      ChangeQueryBuilder changeQueryBuilder,
       PluginMapContext<ReviewerSuggestion> reviewerSuggestionPluginMap,
       Provider<InternalChangeQuery> queryProvider,
+      Provider<IdentifiedUser> identifiedUser,
       @FanOutExecutor ExecutorService executor,
       ApprovalsUtil approvalsUtil,
       @GerritServerConfig Config config,
-      AccountCache accountCache) {
-    this.changeQueryBuilder = changeQueryBuilder;
+      AccountCache accountCache,
+      GroupMembers groupMembers) {
     this.config = config;
     this.queryProvider = queryProvider;
+    this.identifiedUser = identifiedUser;
     this.reviewerSuggestionPluginMap = reviewerSuggestionPluginMap;
     this.executor = executor;
     this.approvalsUtil = approvalsUtil;
     this.accountCache = accountCache;
+    this.groupMembers = groupMembers;
   }
 
   public List<Account.Id> suggestReviewers(
@@ -96,17 +103,47 @@ public class ReviewerRecommender {
       @Nullable ChangeNotes changeNotes,
       String query,
       ProjectState projectState,
-      List<Account.Id> candidateList)
-      throws IOException, ConfigInvalidException {
-    logger.atFine().log("Candidates %s", candidateList);
+      ImmutableList<Account.Id> candidateList)
+      throws IOException, NoSuchProjectException {
+    logger.atFine().log("query: %s, candidates: %s", query, candidateList);
 
-    logger.atFine().log("query: %s", query);
+    Map<Account.Id, MutableDouble> candidateScores = new LinkedHashMap<>();
+    candidateList.stream().forEach(id -> candidateScores.put(id, new MutableDouble(0)));
 
-    double baseWeight = config.getInt("addReviewer", "baseWeight", 1);
-    logger.atFine().log("base weight: %s", baseWeight);
+    // Get the user's recent changes and add them as candidates
+    double recentChangeCandidatesWeight = config.getInt("addReviewer", "baseWeight", 1);
+    logger.atFine().log("recentChangeCandidatesWeight: %s", recentChangeCandidatesWeight);
+    ImmutableList<ChangeData> changes =
+        queryRecentChanges(ChangePredicates.owner(identifiedUser.get().getAccountId()));
+    getMatchingReviewers(changes, query)
+        .forEach(
+            reviewerCandidate ->
+                candidateScores
+                    .computeIfAbsent(reviewerCandidate, (ignored) -> new MutableDouble(0))
+                    .add(recentChangeCandidatesWeight));
 
-    Map<Account.Id, MutableDouble> reviewerScores = baseRanking(baseWeight, query, candidateList);
-    logger.atFine().log("Base reviewer scores: %s", reviewerScores);
+    if (Strings.isNullOrEmpty(query) && candidateScores.isEmpty()) {
+      // There are no candidates for the default reviewer suggestion (= suggestion for an empty
+      // query). Fallback to suggesting the reviewers of recent changes in the same project.
+      changes = queryRecentChanges(ChangePredicates.project(projectState.getNameKey()));
+
+      // Since we are suggesting default reviewers here (query is empty) we do not need to call
+      // getMatchingReviewers here, but we can include the reviewers directly.
+      getReviewers(changes)
+          .forEach(reviewerId -> candidateScores.put(reviewerId, new MutableDouble(0)));
+
+      if (candidateScores.isEmpty()) {
+        // There are still no candidates for the default reviewer suggestion. Fallback to suggesting
+        // the project owners.
+        groupMembers
+            .listAccounts(SystemGroupBackend.PROJECT_OWNERS, projectState.getNameKey())
+            .stream()
+            .map(Account::id)
+            .forEach(projectOwnerId -> candidateScores.put(projectOwnerId, new MutableDouble(0)));
+      }
+    }
+
+    logger.atFine().log("Base candidate scores: %s", candidateScores);
 
     // Send the query along with a candidate list to all plugins and merge the
     // results. Plugins don't necessarily need to use the candidates list, they
@@ -125,7 +162,7 @@ public class ReviewerRecommender {
                           projectState.getNameKey(),
                           changeNotes != null ? changeNotes.getChangeId() : null,
                           query,
-                          reviewerScores.keySet()));
+                          candidateScores.keySet()));
           String key = extension.getPluginName() + "-" + extension.getExportName();
           String pluginWeight = config.getString("addReviewer", key, "weight");
           if (Strings.isNullOrEmpty(pluginWeight)) {
@@ -147,14 +184,14 @@ public class ReviewerRecommender {
       for (Future<Set<SuggestedReviewer>> f : futures) {
         double weight = weightIterator.next();
         for (SuggestedReviewer s : f.get()) {
-          if (reviewerScores.containsKey(s.account)) {
-            reviewerScores.get(s.account).add(s.score * weight);
+          if (candidateScores.containsKey(s.account)) {
+            candidateScores.get(s.account).add(s.score * weight);
           } else {
-            reviewerScores.put(s.account, new MutableDouble(s.score * weight));
+            candidateScores.put(s.account, new MutableDouble(s.score * weight));
           }
         }
       }
-      logger.atFine().log("Reviewer scores: %s", reviewerScores);
+      logger.atFine().log("Candidate scores: %s", candidateScores);
     } catch (ExecutionException | InterruptedException e) {
       logger.atSevere().withCause(e).log("Exception while suggesting reviewers");
       return ImmutableList.of();
@@ -162,7 +199,7 @@ public class ReviewerRecommender {
 
     if (changeNotes != null) {
       // Remove change owner
-      if (reviewerScores.remove(changeNotes.getChange().getOwner()) != null) {
+      if (candidateScores.remove(changeNotes.getChange().getOwner()) != null) {
         logger.atFine().log("Remove change owner %s", changeNotes.getChange().getOwner());
       }
 
@@ -172,7 +209,7 @@ public class ReviewerRecommender {
           .byState(ReviewerStateInternal.fromReviewerState(reviewerState))
           .forEach(
               r -> {
-                if (reviewerScores.remove(r) != null) {
+                if (candidateScores.remove(r) != null) {
                   logger.atFine().log("Remove existing reviewer %s", r);
                 }
               });
@@ -180,63 +217,48 @@ public class ReviewerRecommender {
 
     // Sort results
     Stream<Map.Entry<Account.Id, MutableDouble>> sorted =
-        reviewerScores.entrySet().stream()
+        candidateScores.entrySet().stream()
             .sorted(Map.Entry.comparingByValue(Collections.reverseOrder()));
     List<Account.Id> sortedSuggestions = sorted.map(Map.Entry::getKey).collect(toList());
     logger.atFine().log("Sorted suggestions: %s", sortedSuggestions);
     return sortedSuggestions;
   }
 
-  /**
-   * @param baseWeight The weight applied to the ordering of the reviewers.
-   * @param query Query to match. For example, it can try to match all users that start with "Ab".
-   * @param candidateList The list of candidates based on the query. If query is empty, this list is
-   *     also empty.
-   * @return Map of account ids that match the query and their appropriate ranking (the better the
-   *     ranking, the better it is to suggest them as reviewers).
-   * @throws IOException Can't find owner="self" account.
-   * @throws ConfigInvalidException Can't find owner="self" account.
-   */
-  private Map<Account.Id, MutableDouble> baseRanking(
-      double baseWeight, String query, List<Account.Id> candidateList)
-      throws IOException, ConfigInvalidException {
+  private ImmutableList<ChangeData> queryRecentChanges(Predicate<ChangeData> predicate) {
     int numberOfRelevantChanges = config.getInt("suggest", "relevantChanges", 50);
-    // Get the user's last numberOfRelevantChanges changes, check reviewers
-    try {
-      ImmutableList<ChangeData> result =
-          queryProvider
-              .get()
-              .setLimit(numberOfRelevantChanges)
-              .setRequestedFields(ChangeField.REVIEWER_SPEC)
-              .query(changeQueryBuilder.owner("self"));
-      Map<Account.Id, MutableDouble> suggestions = new LinkedHashMap<>();
-      // Put those candidates at the bottom of the list
-      candidateList.stream().forEach(id -> suggestions.put(id, new MutableDouble(0)));
-
-      for (ChangeData cd : result) {
-        for (Account.Id reviewer : cd.reviewers().all()) {
-          if (accountMatchesQuery(reviewer, query)) {
-            suggestions
-                .computeIfAbsent(reviewer, (ignored) -> new MutableDouble(0))
-                .add(baseWeight);
-          }
-        }
-      }
-      return suggestions;
-    } catch (QueryParseException e) {
-      // Unhandled, because owner:self will never provoke a QueryParseException
-      logger.atSevere().withCause(e).log("Exception while suggesting reviewers");
-      return new HashMap<>();
-    }
+    return queryProvider
+        .get()
+        .setLimit(numberOfRelevantChanges)
+        .setRequestedFields(ChangeField.REVIEWER_SPEC)
+        .query(predicate);
   }
 
-  private boolean accountMatchesQuery(Account.Id id, String query) {
-    Optional<Account> account = accountCache.get(id).map(AccountState::account);
-    if (account.isPresent() && account.get().isActive()) {
-      if (Strings.isNullOrEmpty(query)
-          || (account.get().fullName() != null && account.get().fullName().startsWith(query))
-          || (account.get().preferredEmail() != null
-              && account.get().preferredEmail().startsWith(query))) {
+  private ImmutableList<Account.Id> getReviewers(ImmutableList<ChangeData> changes) {
+    return changes.stream().flatMap(cd -> cd.reviewers().all().stream()).collect(toImmutableList());
+  }
+
+  private ImmutableList<Account.Id> getMatchingReviewers(
+      ImmutableList<ChangeData> changes, String query) {
+    ImmutableList<Account.Id> reviewerIds = getReviewers(changes);
+    Map<Account.Id, AccountState> reviewerStates =
+        accountCache.get(ImmutableSet.copyOf(reviewerIds));
+    return reviewerIds.stream()
+        .filter(reviewerId -> accountMatchesQuery(reviewerStates.get(reviewerId), query))
+        .collect(toImmutableList());
+  }
+
+  private boolean accountMatchesQuery(AccountState accountState, String query) {
+    if (accountState == null) {
+      return false;
+    }
+    Account account = accountState.account();
+    if (account.isActive()) {
+      String lowerCaseQuery = Strings.nullToEmpty(query).toLowerCase(Locale.US);
+      if (Strings.isNullOrEmpty(lowerCaseQuery)
+          || (account.fullName() != null
+              && account.fullName().toLowerCase(Locale.US).startsWith(lowerCaseQuery))
+          || (account.preferredEmail() != null
+              && account.preferredEmail().toLowerCase(Locale.US).startsWith(lowerCaseQuery))) {
         return true;
       }
     }

@@ -34,6 +34,7 @@ import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.testing.ConfigSuite;
+import com.google.gerrit.testing.NoGitRepositoryCheckIfClosed;
 import com.google.inject.Inject;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -195,6 +196,7 @@ public abstract class AbstractPushTag extends AbstractDaemonTest {
   }
 
   @Test
+  @NoGitRepositoryCheckIfClosed
   public void pushToNonVisibleTagIsRejected() throws Exception {
     allowTagCreation();
     allowPushOnRefsTags();
@@ -214,6 +216,7 @@ public abstract class AbstractPushTag extends AbstractDaemonTest {
   }
 
   @Test
+  @NoGitRepositoryCheckIfClosed
   public void pushGitDescribeTagIsAllowed() throws Exception {
     Assume.assumeTrue(ANNOTATED == tagType);
 
@@ -266,17 +269,15 @@ public abstract class AbstractPushTag extends AbstractDaemonTest {
     boolean createTag = tagName == null;
     tagName = MoreObjects.firstNonNull(tagName, "v1_" + System.nanoTime());
     switch (tagType) {
-      case LIGHTWEIGHT:
-        break;
-      case ANNOTATED:
+      case LIGHTWEIGHT -> {}
+      case ANNOTATED -> {
         if (createTag) {
           createAnnotatedTag(testRepo, tagName, user.newIdent());
         } else {
           updateAnnotatedTag(testRepo, tagName, user.newIdent());
         }
-        break;
-      default:
-        throw new IllegalStateException("unexpected tag type: " + tagType);
+      }
+      default -> throw new IllegalStateException("unexpected tag type: " + tagType);
     }
 
     if (!newCommit) {

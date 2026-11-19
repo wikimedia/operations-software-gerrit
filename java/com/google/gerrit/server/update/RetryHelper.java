@@ -89,7 +89,7 @@ public class RetryHelper {
     @Nullable
     abstract Duration timeout();
 
-    abstract Optional<String> actionName();
+    abstract String actionName();
 
     abstract Optional<Predicate<Throwable>> retryWithTrace();
 
@@ -120,7 +120,8 @@ public class RetryHelper {
     final Counter3<String, String, String> failuresOnAutoRetryCount;
 
     @Inject
-    Metrics(MetricMaker metricMaker) {
+    @VisibleForTesting
+    public Metrics(MetricMaker metricMaker) {
       Field<String> actionTypeField =
           Field.ofString("action_type", Metadata.Builder::actionType)
               .description("The type of the action that was retried.")
@@ -191,6 +192,7 @@ public class RetryHelper {
   private final Provider<InternalChangeQuery> internalChangeQuery;
   private final Provider<InternalGroupQuery> internalGroupQuery;
   private final PluginSetContext<ExceptionHook> exceptionHooks;
+  private final PluginSetContext<com.google.gerrit.server.update.RetryListener> retryListeners;
   private final Duration defaultTimeout;
   private final Map<String, Duration> defaultTimeouts;
   private final WaitStrategy waitStrategy;
@@ -202,6 +204,7 @@ public class RetryHelper {
       @GerritServerConfig Config cfg,
       Metrics metrics,
       PluginSetContext<ExceptionHook> exceptionHooks,
+      PluginSetContext<com.google.gerrit.server.update.RetryListener> retryListeners,
       BatchUpdate.Factory updateFactory,
       Provider<InternalAccountQuery> internalAccountQuery,
       Provider<InternalChangeQuery> internalChangeQuery,
@@ -214,6 +217,7 @@ public class RetryHelper {
         internalChangeQuery,
         internalGroupQuery,
         exceptionHooks,
+        retryListeners,
         null);
   }
 
@@ -226,6 +230,7 @@ public class RetryHelper {
       Provider<InternalChangeQuery> internalChangeQuery,
       Provider<InternalGroupQuery> internalGroupQuery,
       PluginSetContext<ExceptionHook> exceptionHooks,
+      PluginSetContext<com.google.gerrit.server.update.RetryListener> retryListeners,
       @Nullable Consumer<RetryerBuilder<?>> overwriteDefaultRetryerStrategySetup) {
     this.cfg = cfg;
     this.metrics = metrics;
@@ -234,6 +239,7 @@ public class RetryHelper {
     this.internalChangeQuery = internalChangeQuery;
     this.internalGroupQuery = internalGroupQuery;
     this.exceptionHooks = exceptionHooks;
+    this.retryListeners = retryListeners;
     this.defaultTimeout =
         Duration.ofMillis(
             cfg.getTimeUnit("retry", null, "timeout", SECONDS.toMillis(20), MILLISECONDS));
@@ -476,8 +482,8 @@ public class RetryHelper {
               actionType,
               opts,
               t -> {
-                String actionName = opts.actionName().orElse("N/A");
                 String cause = formatCause(t);
+                long nextAttempt = listener.getAttemptCount() + 1;
 
                 // Do not retry if retrying was already done and failed.
                 if (Throwables.getCausalChain(t).stream()
@@ -490,16 +496,22 @@ public class RetryHelper {
                 if (exceptionPredicate.test(t)) {
                   logger.atFine().withCause(t).log(
                       "Retry: %s failed with possibly temporary error (cause = %s)",
-                      actionName, cause);
+                      opts.actionName(), cause);
+                  retryListeners.runEach(
+                      retryListener ->
+                          retryListener.onRetry(actionType, opts.actionName(), nextAttempt, t));
                   return true;
                 }
 
                 // Exception hooks may identify additional exceptions for retry.
                 if (exceptionHooks.stream()
-                    .anyMatch(h -> h.shouldRetry(actionType, actionName, t))) {
+                    .anyMatch(h -> h.shouldRetry(actionType, opts.actionName(), t))) {
                   logger.atFine().withCause(t).log(
                       "Retry: %s failed with possibly temporary error (cause = %s)",
-                      actionName, cause);
+                      opts.actionName(), cause);
+                  retryListeners.runEach(
+                      retryListener ->
+                          retryListener.onRetry(actionType, opts.actionName(), nextAttempt, t));
                   return true;
                 }
 
@@ -511,7 +523,7 @@ public class RetryHelper {
                   // Exception hooks may identify exceptions for which retrying with trace should be
                   // skipped.
                   if (exceptionHooks.stream()
-                      .anyMatch(h -> h.skipRetryWithTrace(actionType, actionName, t))) {
+                      .anyMatch(h -> h.skipRetryWithTrace(actionType, opts.actionName(), t))) {
                     return false;
                   }
 
@@ -520,9 +532,12 @@ public class RetryHelper {
                     traceContext.addTag(RequestId.Type.TRACE_ID, traceId).forceLogging();
                     logger.atWarning().withCause(t).log(
                         "AutoRetry: %s failed, retry with tracing enabled (cause = %s)",
-                        actionName, cause);
+                        opts.actionName(), cause);
                     opts.onAutoTrace().ifPresent(c -> c.accept(traceId));
-                    metrics.autoRetryCount.increment(actionType, actionName, cause);
+                    metrics.autoRetryCount.increment(actionType, opts.actionName(), cause);
+                    retryListeners.runEach(
+                        retryListener ->
+                            retryListener.onRetry(actionType, opts.actionName(), nextAttempt, t));
                     return true;
                   }
 
@@ -530,8 +545,9 @@ public class RetryHelper {
                   // enabled and it failed again. Log the failure so that admin can see if it
                   // differs from the failure that triggered the retry.
                   logger.atWarning().withCause(t).log(
-                      "AutoRetry: auto-retry of %s has failed (cause = %s)", actionName, cause);
-                  metrics.failuresOnAutoRetryCount.increment(actionType, actionName, cause);
+                      "AutoRetry: auto-retry of %s has failed (cause = %s)",
+                      opts.actionName(), cause);
+                  metrics.failuresOnAutoRetryCount.increment(actionType, opts.actionName(), cause);
                   return false;
                 }
 
@@ -541,10 +557,12 @@ public class RetryHelper {
       return executeWithTimeoutCount(actionType, action, opts, retryerBuilder.build(), listener);
     } finally {
       if (listener.getAttemptCount() > 1) {
-        logger.atWarning().log("%s was attempted %d times", actionType, listener.getAttemptCount());
+        logger.atWarning().log(
+            "%s.%s was attempted %d times",
+            actionType, opts.actionName(), listener.getAttemptCount());
         metrics.attemptCounts.incrementBy(
             actionType,
-            opts.actionName().orElse("N/A"),
+            opts.actionName(),
             listener.getOriginalCause().map(this::formatCause).orElse("_unknown"),
             listener.getAttemptCount() - 1);
       }
@@ -600,7 +618,7 @@ public class RetryHelper {
       if (e instanceof RetryException) {
         metrics.timeoutCount.increment(
             actionType,
-            opts.actionName().orElse("N/A"),
+            opts.actionName(),
             listener.getOriginalCause().map(this::formatCause).orElse("_unknown"));
 
         // Re-throw the RetryException so that retrying is not re-attempted on an outer level.

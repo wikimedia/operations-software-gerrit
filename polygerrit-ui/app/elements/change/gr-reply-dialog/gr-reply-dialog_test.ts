@@ -2194,11 +2194,11 @@ suite('gr-reply-dialog tests', () => {
   test('sendButton text', async () => {
     element.canBeStarted = false;
     await element.updateComplete;
-    assert.equal(element.sendButton?.innerText, 'SEND');
+    assert.equal(element.sendButton?.innerText, 'Send');
 
     element.canBeStarted = true;
     await element.updateComplete;
-    assert.equal(element.sendButton?.innerText, 'SEND AND START REVIEW');
+    assert.equal(element.sendButton?.innerText, 'Send and Start Review');
   });
 
   test('handle400Error reviewers and CCs', async () => {
@@ -2645,6 +2645,31 @@ suite('gr-reply-dialog tests', () => {
 
       await waitUntil(() => autoSaveStub.callCount === 1);
 
+      assert.deepEqual(patchsetLevelComment.messageText, '');
+    });
+
+    test('comment is auto saved when ESC is pressed from patchset level comment', async () => {
+      const patchsetLevelComment = queryAndAssert<GrComment>(
+        element,
+        '#patchsetLevelComment'
+      );
+      const autoSaveStub = sinon
+        .stub(patchsetLevelComment, 'save')
+        .returns(Promise.resolve());
+      const cancelSpy = sinon.spy(element, 'cancel');
+
+      patchsetLevelComment.messageText = 'hello world';
+
+      await waitUntil(
+        () => element.patchsetLevelDraftMessage === 'hello world'
+      );
+      assert.deepEqual(autoSaveStub.callCount, 0);
+
+      patchsetLevelComment.messageText = '';
+      pressKey(element, Key.ESC);
+
+      await waitUntil(() => autoSaveStub.callCount === 1);
+      assert.isTrue(cancelSpy.called);
       assert.deepEqual(patchsetLevelComment.messageText, '');
     });
 

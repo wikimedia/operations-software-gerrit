@@ -26,6 +26,7 @@ import com.google.gerrit.acceptance.ExtensionRegistry;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit.Result;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.Project;
@@ -64,10 +65,16 @@ public class ChangeIncludedInIT extends AbstractDaemonTest {
     String capturedCommit;
     Collection<String> capturedTags;
     Collection<String> capturedBranches;
+    private Integer capturedChangeNumber;
 
     @Override
     public ImmutableListMultimap<String, String> getIncludedIn(
-        String project, String commit, Collection<String> tags, Collection<String> branches) {
+        String project,
+        @Nullable Integer changeNumber,
+        String commit,
+        Collection<String> tags,
+        Collection<String> branches) {
+      capturedChangeNumber = changeNumber;
       capturedProject = project;
       capturedCommit = commit;
       capturedTags = tags;
@@ -140,6 +147,7 @@ public class ChangeIncludedInIT extends AbstractDaemonTest {
     }
 
     assertThat(externalIncludedIn.capturedProject).isEqualTo(project.get());
+    assertThat(externalIncludedIn.capturedChangeNumber).isEqualTo(changeInfo._number);
     assertThat(externalIncludedIn.capturedCommit).isEqualTo(changeInfo.currentRevision);
     assertThat(ImmutableSet.copyOf(externalIncludedIn.capturedTags)).containsExactly("test-tag");
     assertThat(ImmutableSet.copyOf(externalIncludedIn.capturedBranches))

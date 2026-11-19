@@ -25,6 +25,7 @@ import {
   queryAndAssert,
   stubReporting,
   stubRestApi,
+  waitUntil,
 } from '../../../test/test-utils';
 import {assertUIActionInfo, GrChangeActions} from './gr-change-actions';
 import {
@@ -40,6 +41,7 @@ import {
   RepoName,
   ReviewInput,
   TopicName,
+  ValidationOptionsInfo,
 } from '../../../types/common';
 import {ActionType, RevisionActions} from '../../../api/change-actions';
 import {SinonFakeTimers, SinonStubbedMember} from 'sinon';
@@ -54,7 +56,10 @@ import {GrConfirmSubmitDialog} from '../gr-confirm-submit-dialog/gr-confirm-subm
 import {GrConfirmRebaseDialog} from '../gr-confirm-rebase-dialog/gr-confirm-rebase-dialog';
 import {GrConfirmMoveDialog} from '../gr-confirm-move-dialog/gr-confirm-move-dialog';
 import {GrConfirmAbandonDialog} from '../gr-confirm-abandon-dialog/gr-confirm-abandon-dialog';
-import {GrConfirmRevertDialog} from '../gr-confirm-revert-dialog/gr-confirm-revert-dialog';
+import {
+  GrConfirmRevertDialog,
+  RevertType,
+} from '../gr-confirm-revert-dialog/gr-confirm-revert-dialog';
 import {testResolver} from '../../../test/common-test-setup';
 import {storageServiceToken} from '../../../services/storage/gr-storage_impl';
 import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
@@ -62,6 +67,7 @@ import {
   ChangeModel,
   changeModelToken,
 } from '../../../models/change/change-model';
+import {assertIsDefined} from '../../../utils/common-util';
 
 // TODO(dhruvsri): remove use of _populateRevertMessage as it's private
 suite('gr-change-actions tests', () => {
@@ -99,6 +105,12 @@ suite('gr-change-actions tests', () => {
             enabled: true,
           },
         })
+      );
+
+      stubRestApi('getValidationOptions').returns(
+        Promise.resolve({
+          validation_options: [{name: 'o1', description: 'option 1'}],
+        } as ValidationOptionsInfo)
       );
 
       sinon
@@ -671,6 +683,60 @@ suite('gr-change-actions tests', () => {
           allow_conflicts: false,
           on_behalf_of_uploader: true,
           committer_email: 'test@default.org',
+          validation_options: {},
+        },
+        {allow_conflicts: false, on_behalf_of_uploader: true},
+      ]);
+    });
+
+    test('rebase change with validation options', async () => {
+      const fireActionStub = sinon.stub(element, 'fireAction');
+      const confirmRebaseDialog = queryAndAssert<GrConfirmRebaseDialog>(
+        element,
+        '#confirmRebase'
+      );
+      const fetchChangesStub = sinon
+        .stub(confirmRebaseDialog, 'fetchRecentChanges')
+        .returns(Promise.resolve([]));
+      sinon
+        .stub(confirmRebaseDialog, 'getValidationOptions')
+        .returns([{name: 'o1', description: 'option 1'}]);
+      await element.updateComplete;
+      queryAndAssert<GrButton>(
+        element,
+        'gr-button[data-action-key="rebase"]'
+      ).click();
+      const rebaseAction = {
+        __key: 'rebase',
+        __type: 'revision',
+        __primary: false,
+        enabled: true,
+        label: 'Rebase',
+        method: HttpMethod.POST,
+        title: 'Rebase onto tip of branch or parent change',
+      };
+      assert.isTrue(fetchChangesStub.called);
+      element.handleRebaseConfirm(
+        new CustomEvent('', {
+          detail: {
+            base: '1234',
+            allowConflicts: false,
+            rebaseChain: false,
+            onBehalfOfUploader: true,
+            committerEmail: 'test@default.org',
+          },
+        })
+      );
+      assert.deepEqual(fireActionStub.lastCall.args, [
+        '/rebase',
+        assertUIActionInfo(rebaseAction),
+        true,
+        {
+          base: '1234',
+          allow_conflicts: false,
+          on_behalf_of_uploader: true,
+          committer_email: 'test@default.org',
+          validation_options: {o1: 'true'},
         },
         {allow_conflicts: false, on_behalf_of_uploader: true},
       ]);
@@ -1483,20 +1549,19 @@ suite('gr-change-actions tests', () => {
           false,
           {
             message: 'foo message',
+            validation_options: {},
           },
         ]);
       });
 
       test('revert change with plugin hook', async () => {
         const newRevertMsg = 'Modified revert msg';
+        const revertDialog = queryAndAssert<GrConfirmRevertDialog>(
+          element,
+          '#confirmRevertDialog'
+        );
         sinon
-          .stub(
-            queryAndAssert<GrConfirmRevertDialog>(
-              element,
-              '#confirmRevertDialog'
-            ),
-            'modifyRevertMsg'
-          )
+          .stub(revertDialog, 'modifyRevertMsg')
           .callsFake(() => newRevertMsg);
         element.change = {
           ...createChangeViewChange(),
@@ -1527,13 +1592,7 @@ suite('gr-change-actions tests', () => {
           ])
         );
         sinon
-          .stub(
-            queryAndAssert<GrConfirmRevertDialog>(
-              element,
-              '#confirmRevertDialog'
-            ),
-            'populateRevertSubmissionMessage'
-          )
+          .stub(revertDialog, 'populateRevertSubmissionMessage')
           .callsFake(() => 'original msg');
         await element.updateComplete;
         queryAndAssert<GrButton>(
@@ -1541,11 +1600,8 @@ suite('gr-change-actions tests', () => {
           'gr-button[data-action-key="revert"]'
         ).click();
         await element.updateComplete;
-        assert.equal(
-          queryAndAssert<GrConfirmRevertDialog>(element, '#confirmRevertDialog')
-            .message,
-          newRevertMsg
-        );
+        await waitUntil(() => !!revertDialog.message);
+        assert.equal(revertDialog.message, newRevertMsg);
       });
 
       suite('revert change submitted together', () => {
@@ -1584,16 +1640,17 @@ suite('gr-change-actions tests', () => {
         });
 
         test('confirm revert dialog shows both options', async () => {
-          queryAndAssert<GrButton>(
-            element,
-            'gr-button[data-action-key="revert"]'
-          ).click();
-          await element.updateComplete;
-          assert.equal(getChangesStub.args[0][1], 'submissionid: "199 0"');
           const confirmRevertDialog = queryAndAssert<GrConfirmRevertDialog>(
             element,
             '#confirmRevertDialog'
           );
+          queryAndAssert<GrButton>(
+            element,
+            'gr-button[data-action-key="revert"]'
+          ).click();
+          await waitUntil(() => !!confirmRevertDialog.message);
+          await element.updateComplete;
+          assert.equal(getChangesStub.args[0][1], 'submissionid: "199 0"');
           await element.updateComplete;
           const revertSingleChangeLabel = queryAndAssert<HTMLLabelElement>(
             confirmRevertDialog,
@@ -1640,6 +1697,7 @@ suite('gr-change-actions tests', () => {
             '#confirmRevertDialog'
           );
           const fireStub = sinon.stub(confirmRevertDialog, 'dispatchEvent');
+          await waitUntil(() => !!confirmRevertDialog.message);
           await element.updateComplete;
           queryAndAssert<GrButton>(
             queryAndAssert(
@@ -1666,6 +1724,7 @@ suite('gr-change-actions tests', () => {
             element,
             '#confirmRevertDialog'
           );
+          await waitUntil(() => !!confirmRevertDialog.message);
           await element.updateComplete;
           const radioInputs = queryAll<HTMLInputElement>(
             confirmRevertDialog,
@@ -1738,6 +1797,7 @@ suite('gr-change-actions tests', () => {
             '#confirmRevertDialog'
           );
           const fireStub = sinon.stub(confirmRevertDialog, 'dispatchEvent');
+          await waitUntil(() => !!confirmRevertDialog.message);
           await element.updateComplete;
           queryAndAssert<GrButton>(
             queryAndAssert(
@@ -1755,15 +1815,16 @@ suite('gr-change-actions tests', () => {
         });
 
         test('confirm revert dialog shows no radio button', async () => {
-          queryAndAssert<GrButton>(
-            element,
-            'gr-button[data-action-key="revert"]'
-          ).click();
-          await element.updateComplete;
           const confirmRevertDialog = queryAndAssert<GrConfirmRevertDialog>(
             element,
             '#confirmRevertDialog'
           );
+          queryAndAssert<GrButton>(
+            element,
+            'gr-button[data-action-key="revert"]'
+          ).click();
+          await waitUntil(() => !!confirmRevertDialog.message);
+          await element.updateComplete;
           const radioInputs = queryAll(
             confirmRevertDialog,
             'input[name="revertOptions"]'
@@ -2556,6 +2617,45 @@ suite('gr-change-actions tests', () => {
             assert.isTrue(setUrlStub.called);
             assert.equal(setUrlStub.lastCall.args[0], '/c/projectId/+/12345');
           });
+        });
+
+        test('sends validation options when opening revert dialog', async () => {
+          sinon.stub(element, 'handleAction');
+          const fireActionStub = sinon.stub(element, 'fireAction');
+          element.actions = {
+            revert: {
+              method: HttpMethod.POST,
+              label: 'Revert',
+              title: 'Revert the change',
+              enabled: true,
+            },
+          };
+          const confirmRevertDialog = query<GrConfirmRevertDialog>(
+            element,
+            '#confirmRevertDialog'
+          );
+          assertIsDefined(confirmRevertDialog, 'confirmDialog');
+          const populateRevertDialogStub = sinon.stub(
+            confirmRevertDialog,
+            'populate'
+          );
+          element.showRevertDialog();
+          await waitUntil(() => !!populateRevertDialogStub.called);
+          assert.deepEqual(populateRevertDialogStub.lastCall.args[1], {
+            validation_options: [{name: 'o1', description: 'option 1'}],
+          });
+
+          element.handleRevertDialogConfirm(
+            new CustomEvent('confirm', {
+              detail: {
+                revertType: RevertType.REVERT_SINGLE_CHANGE,
+                message: 'revert this change',
+              },
+            })
+          );
+          await waitUntil(() => !!fireActionStub.called);
+
+          assert.deepEqual(fireActionStub.lastCall.args[0], '/revert');
         });
 
         suite('multiple changes revert', () => {

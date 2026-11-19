@@ -23,18 +23,18 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.flogger.FluentLogger;
-import com.google.common.hash.BloomFilter;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.server.cache.CacheInfo;
+import com.google.gerrit.extensions.common.CacheInfo;
 import com.google.gerrit.server.cache.PersistentCache;
 import com.google.gerrit.server.cache.serialize.CacheSerializer;
 import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.util.time.TimeUtil;
+import com.google.gerrit.util.concurrent.ConcurrentBloomFilter;
 import com.google.inject.TypeLiteral;
 import java.io.IOException;
 import java.io.InvalidClassException;
@@ -113,18 +113,14 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
     K key = (K) objKey;
 
     ValueHolder<V> h = mem.getIfPresent(key);
-    if (h != null) {
-      return h.value;
-    }
-
-    if (store.mightContain(key)) {
+    if (h == null) {
       h = store.getIfPresent(key);
-      if (h != null) {
-        mem.put(key, h);
-        return h.value;
+      if (h == null) {
+        return null;
       }
+      mem.put(key, h);
     }
-    return null;
+    return h.value;
   }
 
   @Override
@@ -162,16 +158,12 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
     return mem.get(
             key,
             () -> {
-              if (store.mightContain(key)) {
-                ValueHolder<V> h = store.getIfPresent(key);
-                if (h != null) {
-                  return h;
-                }
+              ValueHolder<V> h = store.getIfPresent(key);
+              if (h == null) {
+                h = new ValueHolder<>(valueLoader.call(), Instant.ofEpochMilli(TimeUtil.nowMs()));
+                ValueHolder<V> fh = h;
+                executor.execute(() -> store.put(key, fh));
               }
-
-              ValueHolder<V> h =
-                  new ValueHolder<>(valueLoader.call(), Instant.ofEpochMilli(TimeUtil.nowMs()));
-              executor.execute(() -> store.put(key, h));
               return h;
             })
         .value;
@@ -265,16 +257,12 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
       try (TraceTimer timer =
           TraceContext.newTimer(
               "Loading value from cache", Metadata.builder().cacheKey(key.toString()).build())) {
-        if (store.mightContain(key)) {
-          ValueHolder<V> h = store.getIfPresent(key);
-          if (h != null) {
-            return h;
-          }
+        ValueHolder<V> h = store.getIfPresent(key);
+        if (h == null) {
+          h = new ValueHolder<>(loader.load(key), Instant.ofEpochMilli(TimeUtil.nowMs()));
+          ValueHolder<V> fh = h;
+          executor.execute(() -> store.put(key, fh));
         }
-
-        final ValueHolder<V> h =
-            new ValueHolder<>(loader.load(key), Instant.ofEpochMilli(TimeUtil.nowMs()));
-        executor.execute(() -> store.put(key, h));
         return h;
       }
     }
@@ -285,16 +273,12 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
         List<K> notInMemory = new ArrayList<>();
         Map<K, ValueHolder<V>> result = new HashMap<>();
         for (K key : keys) {
-          if (!store.mightContain(key)) {
+          ValueHolder<V> h = store.getIfPresent(key);
+          if (h == null) {
             notInMemory.add(key);
             continue;
           }
-          ValueHolder<V> h = store.getIfPresent(key);
-          if (h != null) {
-            result.put(key, h);
-          } else {
-            notInMemory.add(key);
-          }
+          result.put(key, h);
         }
         try {
           Map<K, V> remaining = loader.loadAll(notInMemory);
@@ -356,10 +340,10 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
     private final BlockingQueue<SqlHandle> handles;
     private final AtomicLong hitCount = new AtomicLong();
     private final AtomicLong missCount = new AtomicLong();
-    private volatile BloomFilter<K> bloomFilter;
-    private int estimatedSize;
-    private boolean buildBloomFilter;
-    private boolean isOfflineReindex;
+    private final ConcurrentBloomFilter<K> bloomFilter;
+    private final boolean buildBloomFilter;
+    private boolean trackLastAccess;
+    private volatile boolean ensuredSchemaCreation;
 
     SqlStore(
         String jdbcUrl,
@@ -368,10 +352,11 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
         CacheSerializer<V> valueSerializer,
         int version,
         long maxSize,
+        int maxInvalidated,
         @Nullable Duration expireAfterWrite,
         @Nullable Duration refreshAfterWrite,
         boolean buildBloomFilter,
-        boolean isOfflineReindex) {
+        boolean trackLastAccess) {
       this.url = jdbcUrl;
       this.keyType = createKeyType(keyType, keySerializer);
       this.valueSerializer = valueSerializer;
@@ -380,11 +365,16 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
       this.expireAfterWrite = expireAfterWrite;
       this.refreshAfterWrite = refreshAfterWrite;
       this.buildBloomFilter = buildBloomFilter;
-      this.isOfflineReindex = isOfflineReindex;
+      this.trackLastAccess = trackLastAccess;
 
       int cores = Runtime.getRuntime().availableProcessors();
       int keep = Math.min(cores, 16);
       this.handles = new ArrayBlockingQueue<>(keep);
+      bloomFilter =
+          new ConcurrentBloomFilter<>(
+              this.keyType.funnel(),
+              buildBloomFilter ? this::buildBloomFilter : () -> {},
+              maxInvalidated);
     }
 
     @SuppressWarnings("unchecked")
@@ -396,10 +386,40 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
       return new ObjectKeyTypeImpl<>(serializer);
     }
 
-    synchronized void open() {
-      if (buildBloomFilter && bloomFilter == null) {
-        buildBloomFilter();
+    private void createSchema() throws SQLException {
+      if (!ensuredSchemaCreation) {
+        synchronized (this) {
+          if (ensuredSchemaCreation) {
+            return;
+          }
+          try (SqlHandle h = new SqlHandle(url)) {
+            try (Statement stmt = h.conn.createStatement()) {
+              stmt.addBatch(
+                  "CREATE TABLE IF NOT EXISTS data"
+                      + "(k "
+                      + keyType.columnType()
+                      + " NOT NULL PRIMARY KEY HASH"
+                      + ",v OTHER NOT NULL"
+                      + ",created TIMESTAMP NOT NULL"
+                      + ",accessed TIMESTAMP NOT NULL"
+                      + ")");
+              stmt.addBatch(
+                  "ALTER TABLE data ADD COLUMN IF NOT EXISTS "
+                      + "space BIGINT AS OCTET_LENGTH(k) + OCTET_LENGTH(v)");
+              stmt.addBatch(
+                  "ALTER TABLE data ADD COLUMN IF NOT EXISTS version INT DEFAULT 0 NOT NULL");
+              stmt.addBatch("CREATE INDEX IF NOT EXISTS version_key ON data(version, k)");
+              stmt.addBatch("CREATE INDEX IF NOT EXISTS accessed ON data(accessed)");
+              stmt.executeBatch();
+              ensuredSchemaCreation = true;
+            }
+          }
+        }
       }
+    }
+
+    void open() {
+      bloomFilter.initIfNeeded();
     }
 
     void close() {
@@ -410,7 +430,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
     }
 
     boolean mightContain(K key) {
-      BloomFilter<K> b = bloomFilter;
+      ConcurrentBloomFilter<K> b = bloomFilter;
       if (buildBloomFilter && b == null) {
         synchronized (this) {
           b = bloomFilter;
@@ -427,25 +447,23 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
       SqlHandle c = null;
       try (TraceTimer ignored = TraceContext.newTimer("Build bloom filter", Metadata.empty())) {
         c = acquire();
-        if (estimatedSize <= 0) {
+        if (bloomFilter.getEstimatedSize() <= 0) {
           try (PreparedStatement ps =
               c.conn.prepareStatement("SELECT COUNT(*) FROM data WHERE version=?")) {
             ps.setInt(1, version);
             try (ResultSet r = ps.executeQuery()) {
-              estimatedSize = r.next() ? r.getInt(1) : 0;
+              bloomFilter.setEstimatedSize(r.next() ? r.getInt(1) : 0);
             }
           }
         }
 
         try (PreparedStatement ps = c.conn.prepareStatement("SELECT k FROM data WHERE version=?")) {
           ps.setInt(1, version);
-          BloomFilter<K> b = newBloomFilter();
           try (ResultSet r = ps.executeQuery()) {
             while (r.next()) {
-              b.put(keyType.get(r, 1));
+              bloomFilter.buildPut(keyType.get(r, 1));
             }
           }
-          bloomFilter = b;
         } catch (Exception e) {
           if (Throwables.getCausalChain(e).stream()
               .anyMatch(InvalidClassException.class::isInstance)) {
@@ -463,6 +481,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
             throw e;
           }
         }
+        bloomFilter.build();
       } catch (IOException | SQLException e) {
         logger.atWarning().log("Cannot build BloomFilter for %s: %s", url, e.getMessage());
         c = close(c);
@@ -473,6 +492,10 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
 
     @Nullable
     ValueHolder<V> getIfPresent(K key) {
+      if (!mightContain(key)) {
+        return null;
+      }
+
       SqlHandle c = null;
       try {
         c = acquire();
@@ -502,7 +525,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
           ValueHolder<V> h = new ValueHolder<>(val, created.toInstant());
           h.clean = true;
           hitCount.incrementAndGet();
-          if (!isOfflineReindex) {
+          if (trackLastAccess) {
             touch(c, key);
           }
           return h;
@@ -564,13 +587,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
         return;
       }
 
-      BloomFilter<K> b = null;
-      do {
-        b = bloomFilter;
-        if (b != null) {
-          b.put(key);
-        }
-      } while (!referenceEqualsSuppressed(b, bloomFilter));
+      bloomFilter.put(key);
 
       SqlHandle c = null;
       try {
@@ -623,6 +640,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
       } finally {
         c.invalidate.clearParameters();
       }
+      bloomFilter.invalidate(key);
     }
 
     void invalidateAll() {
@@ -632,7 +650,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
         try (Statement s = c.conn.createStatement()) {
           s.executeUpdate("DELETE FROM data");
         }
-        bloomFilter = newBloomFilter();
+        bloomFilter.clear();
       } catch (SQLException e) {
         logger.atWarning().withCause(e).log("Cannot invalidate cache %s", url);
         c = close(c);
@@ -641,7 +659,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
       }
     }
 
-    void prune(Cache<K, ?> mem) {
+    synchronized void prune(Cache<K, ?> mem) {
       SqlHandle c = null;
       try {
         c = acquire();
@@ -684,6 +702,10 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
                 used -= r.getLong(2);
               }
             }
+            // We should be building a new bloomfilter here as we are iterating over
+            // many entries anyway. The "sum' query above does not return all the rows,
+            // but it likely has to read them from disk to get their size and that is
+            // likely to be the slow part anyway?
             logger.atInfo().log(
                 "Done pruning cache %s, size (%s) is now less than maxSize (%s)",
                 url, CacheInfo.EntriesInfo.bytes(used), formattedMaxSize);
@@ -694,6 +716,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
         c = close(c);
       } finally {
         release(c);
+        bloomFilter.startBuildIfNeeded();
       }
     }
 
@@ -717,12 +740,14 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
       } finally {
         release(c);
       }
-      return new DiskStats(size, space, hitCount.get(), missCount.get());
+      return new DiskStats(
+          size, space, hitCount.get(), missCount.get(), bloomFilter.getInvalidatedCount());
     }
 
     private SqlHandle acquire() throws SQLException {
+      createSchema();
       SqlHandle h = handles.poll();
-      return h != null ? h : new SqlHandle(url, keyType);
+      return h != null ? h : new SqlHandle(url);
     }
 
     private void release(SqlHandle h) {
@@ -738,14 +763,9 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
       }
       return null;
     }
-
-    private BloomFilter<K> newBloomFilter() {
-      int cnt = Math.max(64 * 1024, 2 * estimatedSize);
-      return BloomFilter.create(keyType.funnel(), cnt);
-    }
   }
 
-  static class SqlHandle {
+  static class SqlHandle implements AutoCloseable {
     private final String url;
     Connection conn;
     PreparedStatement get;
@@ -753,30 +773,13 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
     PreparedStatement touch;
     PreparedStatement invalidate;
 
-    SqlHandle(String url, KeyType<?> type) throws SQLException {
+    SqlHandle(String url) throws SQLException {
       this.url = url;
       this.conn = org.h2.Driver.load().connect(url, null);
-      try (Statement stmt = conn.createStatement()) {
-        stmt.addBatch(
-            "CREATE TABLE IF NOT EXISTS data"
-                + "(k "
-                + type.columnType()
-                + " NOT NULL PRIMARY KEY HASH"
-                + ",v OTHER NOT NULL"
-                + ",created TIMESTAMP NOT NULL"
-                + ",accessed TIMESTAMP NOT NULL"
-                + ")");
-        stmt.addBatch(
-            "ALTER TABLE data ADD COLUMN IF NOT EXISTS "
-                + "space BIGINT AS OCTET_LENGTH(k) + OCTET_LENGTH(v)");
-        stmt.addBatch("ALTER TABLE data ADD COLUMN IF NOT EXISTS version INT DEFAULT 0 NOT NULL");
-        stmt.addBatch("CREATE INDEX IF NOT EXISTS version_key ON data(version, k)");
-        stmt.addBatch("CREATE INDEX IF NOT EXISTS accessed ON data(accessed)");
-        stmt.executeBatch();
-      }
     }
 
-    void close() {
+    @Override
+    public void close() {
       get = closeStatement(get);
       put = closeStatement(put);
       touch = closeStatement(touch);
@@ -804,10 +807,5 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
       }
       return null;
     }
-  }
-
-  @SuppressWarnings("ReferenceEquality")
-  private static <T> boolean referenceEqualsSuppressed(T a, T b) {
-    return a == b;
   }
 }

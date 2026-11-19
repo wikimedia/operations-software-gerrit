@@ -102,7 +102,7 @@ export class GrChecksRun extends LitElement {
           margin-left: var(--spacing-s);
         }
         .name {
-          font-weight: var(--font-weight-bold);
+          font-weight: var(--font-weight-medium);
         }
         .eta {
           color: var(--deemphasized-text-color);
@@ -688,7 +688,7 @@ export class GrChecksRuns extends LitElement {
           ${message}
         </div>
         <div class="buttonRow">
-          <gr-button @click=${this.loginCallback} link>Sign in</gr-button>
+          <gr-button @click=${this.loginCallback} link>Sign In</gr-button>
         </div>
       </div>
     `;
@@ -886,7 +886,7 @@ export class GrChecksRuns extends LitElement {
       <div class="testing">
         <div>Toggle fake runs by clicking buttons:</div>
         <gr-button link @click=${() => clearAllFakeRuns(this.getChecksModel())}
-          >none</gr-button
+          >None</gr-button
         >
         <gr-button
           link

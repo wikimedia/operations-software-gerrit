@@ -14,11 +14,11 @@ OW2_VERS = "9.7"
 AUTO_VALUE_GSON_VERSION = "1.3.1"
 PROLOG_VERS = "1.4.4"
 PROLOG_REPO = GERRIT
-GITILES_VERS = "1.5.0"
+GITILES_VERS = "1.6.0"
 GITILES_REPO = GERRIT
 
 # When updating Bouncy Castle, also update it in bazlets.
-BC_VERS = "1.74"
+BC_VERS = "1.80"
 HTTPCOMP_VERS = "4.5.14"
 JETTY_VERS = "9.4.57.v20241219"
 BYTE_BUDDY_VERSION = "1.14.9"
@@ -96,12 +96,6 @@ def java_dependencies():
         name = "guava-failureaccess",
         artifact = "com.google.guava:failureaccess:1.0.1",
         sha1 = "1dcf1de382a0bf95a3d8b0849546c88bac1292c9",
-    )
-
-    maven_jar(
-        name = "juniversalchardet",
-        artifact = "com.github.albfernandez:juniversalchardet:2.0.0",
-        sha1 = "28c59f58f5adcc307604602e2aa89e2aca14c554",
     )
 
     maven_jar(
@@ -359,14 +353,14 @@ def java_dependencies():
         artifact = "com.google.gitiles:blame-cache:" + GITILES_VERS,
         attach_source = False,
         repository = GITILES_REPO,
-        sha1 = "b398a6afa71a722bac29bc2fa69c27a582cc0e2b",
+        sha1 = "e110f1129a31a0bbb76c28da2a1770b234f1a755",
     )
 
     maven_jar(
         name = "gitiles-servlet",
         artifact = "com.google.gitiles:gitiles-servlet:" + GITILES_VERS,
         repository = GITILES_REPO,
-        sha1 = "a32de9f1065001b5a8dd3ef9396833da643dcdb3",
+        sha1 = "52441c05b83291898da051591036d0d55e1f3501",
     )
 
     maven_jar(
@@ -384,31 +378,25 @@ def java_dependencies():
     maven_jar(
         name = "bcprov",
         artifact = "org.bouncycastle:bcprov-jdk18on:" + BC_VERS,
-        sha1 = "8753dedf57165efdb1a7a69a90fe49a77353efb9",
+        sha1 = "e22100b41042decf09cab914a5af8d2c57b5ac4a",
     )
 
     maven_jar(
         name = "bcpg",
         artifact = "org.bouncycastle:bcpg-jdk18on:" + BC_VERS,
-        sha1 = "08af7527e1e13b4fcfc55ff81b99becd12f319c7",
+        sha1 = "163889a825393854dbe7dc52f1a8667e715e9859",
     )
 
     maven_jar(
         name = "bcpkix",
         artifact = "org.bouncycastle:bcpkix-jdk18on:" + BC_VERS,
-        sha1 = "a197fb87f0697c1925e7248865ee84516fdb6d9c",
+        sha1 = "5277dfaaef2e92ce1d802499599a0ca7488f86e6",
     )
 
     maven_jar(
         name = "bcutil",
         artifact = "org.bouncycastle:bcutil-jdk18on:" + BC_VERS,
-        sha1 = "929723bc9ef128aadba955929f701393bc6a153b",
-    )
-
-    maven_jar(
-        name = "h2",
-        artifact = "com.h2database:h2:1.3.176",
-        sha1 = "fd369423346b2f1525c413e33f8cf95b09c92cbd",
+        sha1 = "b95726d1d49a0c65010c59a3e6640311d951bfd1",
     )
 
     maven_jar(

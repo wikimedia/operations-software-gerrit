@@ -24,6 +24,16 @@ import {resolve} from '../../models/dependency';
 import {commentsModelToken} from '../../models/comments/comments-model';
 import {subscribe} from '../lit/subscription-controller';
 import {changeModelToken} from '../../models/change/change-model';
+import {getAppContext} from '../../services/app-context';
+import {Interaction} from '../../constants/reporting';
+import {KnownExperimentId} from '../../services/flags/flags';
+import {
+  ReportSource,
+  suggestionsServiceToken,
+} from '../../services/suggestions/suggestions-service';
+import {FixSuggestionInfo, RevisionPatchSetNum} from '../../api/rest-api';
+import {when} from 'lit/directives/when.js';
+import {fireAlert} from '../../utils/event-util';
 
 @customElement('gr-diff-check-result')
 export class GrDiffCheckResult extends LitElement {
@@ -46,9 +56,24 @@ export class GrDiffCheckResult extends LitElement {
   @state()
   isOwner = false;
 
+  @state()
+  suggestionLoading = false;
+
+  @state()
+  suggestion?: FixSuggestionInfo;
+
   private readonly getChangeModel = resolve(this, changeModelToken);
 
   private readonly getCommentsModel = resolve(this, commentsModelToken);
+
+  private readonly reporting = getAppContext().reportingService;
+
+  private readonly getSuggestionsService = resolve(
+    this,
+    suggestionsServiceToken
+  );
+
+  private readonly flagsService = getAppContext().flagsService;
 
   static override get styles() {
     return [
@@ -99,7 +124,7 @@ export class GrDiffCheckResult extends LitElement {
           margin-right: var(--spacing-m);
         }
         .summary {
-          font-weight: var(--font-weight-bold);
+          font-weight: var(--font-weight-medium);
           flex-shrink: 1;
           overflow: hidden;
           text-overflow: ellipsis;
@@ -142,6 +167,23 @@ export class GrDiffCheckResult extends LitElement {
       () => this.getChangeModel().isOwner$,
       x => (this.isOwner = x)
     );
+    subscribe(
+      this,
+      () => this.getSuggestionsService().suggestionsServiceUpdated$,
+      updated => {
+        if (updated) {
+          this.requestUpdate();
+        }
+      }
+    );
+  }
+
+  protected override firstUpdated(_changedProperties: PropertyValues): void {
+    // This component is only used in gr-diff-host, so we can assume that the
+    // result is always rendered in the diff.
+    this.reporting.reportInteraction(Interaction.CHECKS_RESULT_DIFF_RENDERED, {
+      checkName: this.result?.checkName,
+    });
   }
 
   override render() {
@@ -207,13 +249,56 @@ export class GrDiffCheckResult extends LitElement {
         hidecodepointers
         .result=${this.result}
       ></gr-result-expanded>
+      ${this.renderSuggestionPreview()}
     `;
+  }
+
+  private renderSuggestionPreview() {
+    if (!this.suggestion) return nothing;
+    return html`<gr-checks-fix-preview
+      .fixSuggestionInfos=${[this.suggestion]}
+      .patchSet=${this.result?.patchset}
+    ></gr-checks-fix-preview>`;
   }
 
   private renderActions() {
     return html`<div class="actions">
+      ${this.renderAIFixButton()}
       ${this.renderShowFixButton()}${this.renderPleaseFixButton()}
     </div>`;
+  }
+
+  private renderAIFixButton() {
+    if (!this.shouldShowAIFixButton()) return nothing;
+    return html`<gr-button
+      id="aiFixBtn"
+      link
+      class="action ai-fix"
+      ?disabled=${this.suggestionLoading}
+      @click=${this.handleAIFix}
+      >Get AI Fix
+      ${when(
+        this.suggestionLoading,
+        () => html`<span class="loadingSpin"></span>`
+      )}</gr-button
+    >`;
+  }
+
+  private shouldShowAIFixButton() {
+    if (!this.flagsService.isEnabled(KnownExperimentId.GET_AI_FIX)) {
+      return false;
+    }
+    if (
+      !this.getSuggestionsService()?.isGeneratedSuggestedFixEnabled(
+        this.result?.codePointers?.[0].path
+      )
+    ) {
+      return false;
+    }
+    if (this.result?.fixes?.length) {
+      return false;
+    }
+    return this.isOwner;
   }
 
   private renderPleaseFixButton() {
@@ -274,6 +359,32 @@ export class GrDiffCheckResult extends LitElement {
   private toggleExpanded() {
     if (!this.isExpandable) return;
     this.isExpanded = !this.isExpanded;
+  }
+
+  private async handleAIFix(): Promise<void> {
+    const codePointer = this.result?.codePointers?.[0];
+    if (!this.result || !this.result.message || !codePointer || !this.isOwner)
+      return;
+
+    this.suggestionLoading = true;
+    let suggestion: FixSuggestionInfo | undefined;
+    try {
+      suggestion = await this.getSuggestionsService().generateSuggestedFix({
+        prompt: this.result.message,
+        patchsetNumber: this.result.patchset as RevisionPatchSetNum,
+        filePath: codePointer.path,
+        range: codePointer.range,
+        reportSource: ReportSource.GET_AI_FIX_FOR_CHECK,
+      });
+    } finally {
+      this.suggestionLoading = false;
+    }
+    if (!suggestion) {
+      fireAlert(this, 'No suitable AI fix could be found');
+      return;
+    }
+    this.suggestion = suggestion;
+    this.isExpanded = true;
   }
 }
 

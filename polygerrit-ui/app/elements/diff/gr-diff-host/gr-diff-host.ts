@@ -6,12 +6,7 @@
 import '../../shared/gr-comment-thread/gr-comment-thread';
 import '../../checks/gr-diff-check-result';
 import '../../../embed/diff/gr-diff/gr-diff';
-import {
-  anyLineTooLong,
-  getDiffLength,
-  isImageDiff,
-  SYNTAX_MAX_LINE_LENGTH,
-} from '../../../utils/diff-util';
+import {getDiffLength, isImageDiff} from '../../../utils/diff-util';
 import {getAppContext} from '../../../services/app-context';
 import {
   getParentIndex,
@@ -100,6 +95,7 @@ import {repeat} from 'lit/directives/repeat.js';
 import {ifDefined} from 'lit/directives/if-defined.js';
 import {Shortcut} from '../../lit/shortcut-controller';
 import {shortcutsServiceToken} from '../../../services/shortcuts/shortcuts-service';
+import {toComment} from '../../../models/checks/checks-util';
 
 const EMPTY_BLAME = 'No blame information for this diff.';
 
@@ -716,6 +712,7 @@ export class GrDiffHost extends LitElement {
           results.filter(result => {
             if (result.patchset !== patchNum) return false;
             if (result.category === Category.SUCCESS) return false;
+            if (!result.isLatestAttempt) return false;
             // Only one code pointer is supported. See API docs.
             const pointer = result.codePointers?.[0];
             return pointer?.path === this.path && !!pointer?.range;
@@ -727,19 +724,12 @@ export class GrDiffHost extends LitElement {
   }
 
   private renderCheck(check: RunResult) {
-    const pointer = check.codePointers?.[0];
-    assertIsDefined(pointer, 'code pointer of check result in diff');
-    let pointerAttr: string | undefined = undefined;
-    if (
-      pointer.range?.start_line > 0 &&
-      pointer.range?.end_line > 0 &&
-      pointer.range?.start_character >= 0 &&
-      pointer.range?.end_character >= 0
-    ) {
-      pointerAttr = `${JSON.stringify(pointer.range)}`;
+    const draft = toComment(check);
+    const line = draft.line ?? FILE;
+    let rangeAttr: string | undefined = undefined;
+    if (draft.range) {
+      rangeAttr = `${JSON.stringify(draft.range)}`;
     }
-    const line: LineNumber =
-      pointer.range?.end_line || pointer.range?.start_line || FILE;
 
     return html`
       <gr-diff-check-result
@@ -749,7 +739,7 @@ export class GrDiffHost extends LitElement {
         slot=${`${Side.RIGHT}-${line}`}
         diff-side=${Side.RIGHT}
         line-num=${line}
-        range=${ifDefined(pointerAttr)}
+        range=${ifDefined(rangeAttr)}
       ></gr-diff-check-result>
     `;
   }
@@ -834,9 +824,19 @@ export class GrDiffHost extends LitElement {
     return this.diffElement.isRangeSelected();
   }
 
+  getSelectedRange() {
+    assertIsDefined(this.diffElement);
+    return this.diffElement.getSelectedRange();
+  }
+
   createRangeComment() {
     assertIsDefined(this.diffElement);
     this.diffElement.createRangeComment();
+  }
+
+  isShowFullContext() {
+    assertIsDefined(this.diffElement);
+    return this.diffElement.isShowFullContext();
   }
 
   toggleLeftDiff() {
@@ -1168,14 +1168,6 @@ export class GrDiffHost extends LitElement {
 
   private isSyntaxHighlightingEnabled() {
     if (!this.prefs?.syntax_highlighting || !this.diff) {
-      return false;
-    }
-    if (anyLineTooLong(this.diff)) {
-      fireAlert(
-        this,
-        `Files with line longer than ${SYNTAX_MAX_LINE_LENGTH} characters` +
-          '  will not be syntax highlighted.'
-      );
       return false;
     }
     assertIsDefined(this.diffElement);

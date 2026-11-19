@@ -3,7 +3,7 @@
  * Copyright 2015 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {BehaviorSubject} from 'rxjs';
+import {BehaviorSubject, combineLatest} from 'rxjs';
 import '../gr-copy-links/gr-copy-links';
 import '@polymer/paper-tabs/paper-tabs';
 import '../../../styles/gr-a11y-styles';
@@ -34,7 +34,7 @@ import '../gr-thread-list/gr-thread-list';
 import '../../checks/gr-checks-tab';
 import {ChangeStarToggleStarDetail} from '../../shared/gr-change-star/gr-change-star';
 import {GrEditConstants} from '../../edit/gr-edit-constants';
-import {pluralize} from '../../../utils/string-util';
+import {pluralize, trimWithEllipsis} from '../../../utils/string-util';
 import {untilRendered, whenVisible} from '../../../utils/dom-util';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {ChangeStatus, Tab, DiffViewMode} from '../../../constants/constants';
@@ -588,9 +588,13 @@ export class GrChangeView extends LitElement {
     );
     subscribe(
       this,
-      () => this.getCommentsModel().robotCommentCount$,
-      count => {
-        this.showFindingsTab = count > 0;
+      () =>
+        combineLatest([
+          this.getConfigModel().enableRobotComments$,
+          this.getCommentsModel().robotCommentCount$,
+        ]),
+      ([enableRobotComments, count]) => {
+        this.showFindingsTab = enableRobotComments && count > 0;
       }
     );
     subscribe(
@@ -822,9 +826,31 @@ export class GrChangeView extends LitElement {
         .header {
           align-items: center;
           background-color: var(--background-color-primary);
-          border-bottom: 1px solid var(--border-color);
+          border-bottom: 2px solid var(--border-color);
           display: flex;
           padding: var(--spacing-s) var(--spacing-l);
+        }
+        .header.active {
+          border-color: var(--status-active);
+        }
+        .header.abandoned {
+          border-color: var(--status-abandoned);
+        }
+        .header.merged {
+          border-color: var(--status-merged);
+        }
+        .header.private {
+          border-color: var(--status-private);
+        }
+        .header.ready-to-submit {
+          border-color: var(--status-ready);
+        }
+        .header.wip {
+          border-color: var(--status-wip);
+        }
+        .header.merge-conflict,
+        .header.git-conflict {
+          border-color: var(--status-conflict);
         }
         .header.editMode {
           background-color: var(--edit-mode-background-color);
@@ -863,6 +889,7 @@ export class GrChangeView extends LitElement {
         }
         #replyBtn {
           margin-bottom: var(--spacing-m);
+          --gr-button-padding: var(--spacing-s) var(--spacing-xl);
         }
         gr-change-star {
           margin-left: var(--spacing-s);
@@ -1210,7 +1237,9 @@ export class GrChangeView extends LitElement {
           >${this.change?._number}</a
         >
       </gr-button>
-      <span class="headerSubject">${this.change?.subject}</span>
+      <div class="headerSubject">
+        ${trimWithEllipsis(this.change?.subject, 80)}
+      </div>
       <gr-copy-clipboard
         class="changeCopyClipboard"
         hideInput=""
@@ -1243,7 +1272,7 @@ export class GrChangeView extends LitElement {
       {
         label: 'URL and title',
         shortcut: 'r',
-        value: `${changeURL}: ${this.change?.subject}`,
+        value: `${changeURL} - ${this.change?.subject}`,
       },
       {
         label: 'Markdown',
@@ -1505,7 +1534,7 @@ export class GrChangeView extends LitElement {
             class="show-robot-comments"
             @click=${this.toggleShowRobotComments}
           >
-            ${this.showAllRobotComments ? 'Show Less' : 'Show more'}
+            ${this.showAllRobotComments ? 'Show Less' : 'Show More'}
           </gr-button>
         `
       )}
@@ -1968,7 +1997,7 @@ export class GrChangeView extends LitElement {
     await waitUntil(() => !!this.change);
 
     if (this.change?.status === ChangeStatus.MERGED && this.loggedIn) {
-      this.actions!.showRevertDialog();
+      await this.actions!.showRevertDialog();
     }
   }
 
@@ -2030,7 +2059,7 @@ export class GrChangeView extends LitElement {
     if (!this.loggedIn || !isInvolved(this.change, this.account)) return;
     const newChange = {...this.change};
     if (!newChange.attention_set) newChange.attention_set = {};
-    if (hasAttention(this.account, this.change)) {
+    if (hasAttention(this.account, this.change.attention_set)) {
       const reason = getRemovedByReason(this.account, this.serverConfig);
       if (newChange.attention_set)
         delete newChange.attention_set[this.account._account_id];
@@ -2310,7 +2339,7 @@ export class GrChangeView extends LitElement {
       }
       const change = this.change;
       this.getChangeModel()
-        .fetchChangeUpdates(change)
+        .fetchChangeUpdates(change, /* includeExtraOptions = */ true)
         .then(result => {
           let toastMessage = null;
           if (!result.isLatest) {
@@ -2374,6 +2403,10 @@ export class GrChangeView extends LitElement {
   // Private but used in tests.
   computeHeaderClass() {
     const classes = ['header'];
+    const status = this.computeChangeStatusChips()?.[0];
+    if (status) {
+      classes.push(status.toLowerCase().replace(/\s/g, '-'));
+    }
     if (this.editMode) {
       classes.push('editMode');
     }

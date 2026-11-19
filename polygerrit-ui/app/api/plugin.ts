@@ -30,12 +30,14 @@ export enum EventType {
   SUBMIT_CHANGE = 'submitchange',
   SHOW_REVISION_ACTIONS = 'show-revision-actions',
   COMMIT_MSG_EDIT = 'commitmsgedit',
+  CUSTOM_EMOJIS = 'custom-emojis',
   REVERT = 'revert',
   REVERT_SUBMISSION = 'revert_submission',
   POST_REVERT = 'postrevert',
   ADMIN_MENU_LINKS = 'admin-menu-links',
   SHOW_DIFF = 'showdiff',
   REPLY_SENT = 'replysent',
+  PUBLISH_EDIT = 'publish-edit',
 }
 
 export declare interface PluginApi {

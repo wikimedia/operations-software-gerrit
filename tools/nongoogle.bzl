@@ -11,13 +11,13 @@ AUTO_COMMON_VERSION = "1.2.2"
 
 AUTO_FACTORY_VERSION = "1.0.1"
 
-AUTO_VALUE_VERSION = "1.10.4"
+AUTO_VALUE_VERSION = "1.11.0"
 
-GUAVA_VERSION = "33.0.0-jre"
+GUAVA_VERSION = "33.4.0-jre"
 
-GUAVA_BIN_SHA1 = "161ba27964a62f241533807a46b8711b13c1d94b"
+GUAVA_BIN_SHA1 = "03fcc0a259f724c7de54a6a55ea7e26d3d5c0cac"
 
-GUAVA_TESTLIB_BIN_SHA1 = "cf21e00fcc92786094fb5b376500f50d06878b0b"
+GUAVA_TESTLIB_BIN_SHA1 = "e849ea71846b5ca96387d543c7ac862f18fe2513"
 
 GUAVA_DOC_URL = "https://guava.dev/releases/" + GUAVA_VERSION + "/api/docs/"
 
@@ -63,13 +63,13 @@ def archive_dependencies():
             "sha256": "117af61ee2f1b9b014dcac7c9146f374875551abb8a30e51d1b3c5946d25b142",
         },
         {
-            "name": "ubuntu2204_jdk17",
-            "strip_prefix": "rbe_autoconfig-5.1.0",
+            "name": "ubuntu2204_jdk21",
+            "strip_prefix": "rbe_autoconfig-5.2.0",
             "urls": [
-                "https://gerrit-bazel.storage.googleapis.com/rbe_autoconfig/v5.1.0.tar.gz",
-                "https://github.com/davido/rbe_autoconfig/releases/download/v5.1.0/v5.1.0.tar.gz",
+                "https://gerrit-bazel.storage.googleapis.com/rbe_autoconfig/v5.2.0.tar.gz",
+                "https://github.com/davido/rbe_autoconfig/releases/download/v5.2.0/v5.2.0.tar.gz",
             ],
-            "sha256": "8ea82b81c9707e535ff93ef5349d11e55b2a23c62bcc3b0faaec052144aed87d",
+            "sha256": "294e5d4adea036da243f3c007b098d97229cc02a14bf10d256bd82d5b62a56d9",
         },
     ]
 
@@ -88,8 +88,8 @@ def declare_nongoogle_deps():
 
     maven_jar(
         name = "log4j",
-        artifact = "ch.qos.reload4j:reload4j:1.2.25",
-        sha1 = "45921e383a1001c2a599fc4c6cf59af80cdd1cf1",
+        artifact = "ch.qos.reload4j:reload4j:1.2.26",
+        sha1 = "f9a29cea570c15844d2ec98bf8e2e523017a6a53",
     )
 
     SLF4J_VERS = "1.7.36"
@@ -127,46 +127,40 @@ def declare_nongoogle_deps():
     # Transitive dependency of commons-compress
     maven_jar(
         name = "tukaani-xz",
-        artifact = "org.tukaani:xz:1.9",
-        sha1 = "1ea4bec1a921180164852c65006d928617bd2caf",
+        artifact = "org.tukaani:xz:1.10",
+        sha1 = "1be8166f89e035a56c6bfc67dbc423996fe577e2",
     )
 
     maven_jar(
         name = "dropwizard-core",
-        artifact = "io.dropwizard.metrics:metrics-core:4.1.12.1",
-        sha1 = "cb2f351bf4463751201f43bb99865235d5ba07ca",
+        artifact = "io.dropwizard.metrics:metrics-core:4.2.30",
+        sha1 = "4c0093ffbe0d6a90253e47277ce6dc4f759aff7b",
     )
 
-    SSHD_VERS = "2.14.0"
+    SSHD_VERS = "2.15.0"
 
     maven_jar(
         name = "sshd-osgi",
         artifact = "org.apache.sshd:sshd-osgi:" + SSHD_VERS,
-        sha1 = "6ef66228a088f8ac1383b2ff28f3102f80ebc01a",
+        sha1 = "aa76898fe47eab7da0878dd60e6f3be5631e076c",
     )
 
     maven_jar(
         name = "sshd-sftp",
         artifact = "org.apache.sshd:sshd-sftp:" + SSHD_VERS,
-        sha1 = "c070ac920e72023ae9ab0a3f3a866bece284b470",
-    )
-
-    maven_jar(
-        name = "eddsa",
-        artifact = "net.i2p.crypto:eddsa:0.3.0",
-        sha1 = "1901c8d4d8bffb7d79027686cfb91e704217c3e1",
+        sha1 = "2e226055ed060c64ed76256a9c45de6d0109eef8",
     )
 
     maven_jar(
         name = "mina-core",
-        artifact = "org.apache.mina:mina-core:2.0.23",
-        sha1 = "391228b25d3a24434b205444cd262780a9ea61e7",
+        artifact = "org.apache.mina:mina-core:2.0.27",
+        sha1 = "d5d353d971b0fb17ae0271f6f2921585f64e1535",
     )
 
     maven_jar(
         name = "sshd-mina",
         artifact = "org.apache.sshd:sshd-mina:" + SSHD_VERS,
-        sha1 = "05e1293af53a196ac3c5a4b01dd88985e8672e9e",
+        sha1 = "f0495bc8ad7b6aea017007528d76ed630d011575",
     )
 
     maven_jar(
@@ -196,8 +190,8 @@ def declare_nongoogle_deps():
 
     maven_jar(
         name = "commons-io",
-        artifact = "commons-io:commons-io:2.4",
-        sha1 = "b1b6ea3b7e4aa4f492509a4952029cd8e48019ad",
+        artifact = "commons-io:commons-io:2.18.0",
+        sha1 = "44084ef756763795b31c578403dd028ff4a22950",
     )
 
     # Google internal dependencies: these are developed at Google, so there is
@@ -224,27 +218,27 @@ def declare_nongoogle_deps():
     maven_jar(
         name = "auto-value",
         artifact = "com.google.auto.value:auto-value:" + AUTO_VALUE_VERSION,
-        sha1 = "90f9629eaa123f88551cc26a64bc386967ee24cc",
+        sha1 = "d1fd0e74d20e922145c3fede3f05e246bb6be281",
     )
 
     maven_jar(
         name = "auto-value-annotations",
         artifact = "com.google.auto.value:auto-value-annotations:" + AUTO_VALUE_VERSION,
-        sha1 = "9679de8286eb0a151db6538ba297a8951c4a1224",
+        sha1 = "f0d047931d07cfbc6fa4079854f181ff62891d6f",
     )
 
     maven_jar(
         name = "error-prone-annotations",
-        artifact = "com.google.errorprone:error_prone_annotations:2.22.0",
-        sha1 = "bfb9e4281a4cea34f0ec85b3acd47621cfab35b4",
+        artifact = "com.google.errorprone:error_prone_annotations:2.36.0",
+        sha1 = "227d4d4957ccc3dc5761bd897e3a0ee587e750a7",
     )
 
-    FLOGGER_VERS = "0.7.4"
+    FLOGGER_VERS = "0.8"
 
     maven_jar(
         name = "flogger",
         artifact = "com.google.flogger:flogger:" + FLOGGER_VERS,
-        sha1 = "cec29ed8b58413c2e935d86b12d6b696dc285419",
+        sha1 = "753f5ef5b084dbff3ab3030158ed128711745b06",
     )
 
     maven_jar(
@@ -256,13 +250,13 @@ def declare_nongoogle_deps():
     maven_jar(
         name = "flogger-google-extensions",
         artifact = "com.google.flogger:google-extensions:" + FLOGGER_VERS,
-        sha1 = "c49493bd815e3842b8406e21117119d560399977",
+        sha1 = "42781a3d970e18c96bb0a8d3ddd94d6237aa0612",
     )
 
     maven_jar(
         name = "flogger-system-backend",
         artifact = "com.google.flogger:flogger-system-backend:" + FLOGGER_VERS,
-        sha1 = "4bee7ebbd97c63ca7fb17529aeb49a57b670d061",
+        sha1 = "24b2a20600b1f313540ead4b393813efa13ce14a",
     )
 
     maven_jar(
@@ -306,8 +300,8 @@ def declare_nongoogle_deps():
 
     maven_jar(
         name = "gson",
-        artifact = "com.google.code.gson:gson:2.10.1",
-        sha1 = "b3add478d4382b78ea20b1671390a858002feb6c",
+        artifact = "com.google.code.gson:gson:2.12.1",
+        sha1 = "4e773a317740b83b43cfc3d652962856041697cb",
     )
 
     maven_jar(
@@ -335,62 +329,68 @@ def declare_nongoogle_deps():
         sha1 = "48462eb319817c90c27d377341684b6b81372e08",
     )
 
-    TRUTH_VERS = "1.4.2"
+    TRUTH_VERS = "1.4.4"
 
     maven_jar(
         name = "truth",
         artifact = "com.google.truth:truth:" + TRUTH_VERS,
-        sha1 = "2322d861290bd84f84cbb178e43539725a4588fd",
+        sha1 = "33810058273a2a3b6ce6d1f8c8621bfc85493f67",
     )
 
     maven_jar(
         name = "truth-java8-extension",
         artifact = "com.google.truth.extensions:truth-java8-extension:" + TRUTH_VERS,
-        sha1 = "bfa44a01e1bb5a1df50bc9c678d6588b4d9eb73a",
+        sha1 = "49129ba5889b6811e96a9d49af61122f21314670",
     )
 
     maven_jar(
         name = "truth-liteproto-extension",
         artifact = "com.google.truth.extensions:truth-liteproto-extension:" + TRUTH_VERS,
-        sha1 = "062a2716b3b0ba9d8e72c913dad43a8139b12202",
+        sha1 = "b6282dbc163474900ac914c2dbeca101008f72da",
     )
 
     maven_jar(
         name = "truth-proto-extension",
         artifact = "com.google.truth.extensions:truth-proto-extension:" + TRUTH_VERS,
-        sha1 = "53cfc94dfa435c5dcd6f8b6844b82b423ea0a5af",
+        sha1 = "4b88990178086ffdd482246b35a5a48b4d26896c",
     )
 
-    LUCENE_VERS = "9.8.0"
+    LUCENE_VERS = "10.1.0"
 
     maven_jar(
         name = "lucene-core",
         artifact = "org.apache.lucene:lucene-core:" + LUCENE_VERS,
-        sha1 = "5e8421c5f8573bcf22e9265fc7e19469545a775a",
+        sha1 = "65d7670de89a72433ef374b332da679a484d3a1e",
     )
 
     maven_jar(
         name = "lucene-analyzers-common",
         artifact = "org.apache.lucene:lucene-analysis-common:" + LUCENE_VERS,
-        sha1 = "36f0363325ca7bf62c180160d1ed5165c7c37795",
+        sha1 = "ddbc824a311d49a54f5808d5a01d5c52424c48b8",
     )
 
     maven_jar(
         name = "lucene-backward-codecs",
         artifact = "org.apache.lucene:lucene-backward-codecs:" + LUCENE_VERS,
-        sha1 = "e98fb408028f40170e6d87c16422bfdc0bb2e392",
+        sha1 = "fbbebd58f1505cc70d73dbdbb8196bfc29b9cf08",
     )
 
     maven_jar(
         name = "lucene-misc",
         artifact = "org.apache.lucene:lucene-misc:" + LUCENE_VERS,
-        sha1 = "9a57b049cf51a5e9c9c1909c420f645f1b6f9a54",
+        sha1 = "ae1104521d00501e18e3c18c2b326f15589cc873",
     )
 
     maven_jar(
         name = "lucene-queryparser",
         artifact = "org.apache.lucene:lucene-queryparser:" + LUCENE_VERS,
-        sha1 = "982faf2bfa55542bf57fbadef54c19ac00f57cae",
+        sha1 = "2774ab95128b0615568a4861b9a56f24511f774a",
+    )
+
+    maven_jar(
+        name = "h2",
+        artifact = "com.h2database:h2:2.4.240",
+        sha1 = "686180ad33981ad943fdc0ab381e619b2c2fdfe5",
     )
 
     # JGit's transitive dependencies

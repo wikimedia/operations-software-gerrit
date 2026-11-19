@@ -133,4 +133,70 @@ public class RefUpdateContextTest {
   public void openOtherContextByType_exceptionThrown() {
     assertThrows(Exception.class, () -> RefUpdateContext.open(OTHER));
   }
+
+  @Test
+  public void addCustomData() {
+    String customData = "customData";
+
+    try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+      assertThat(ctx.getCustomData(String.class)).isEmpty();
+      try (RefUpdateContext nestedCtx = RefUpdateContext.open(INIT_REPO)) {
+        nestedCtx.addCustomData(customData);
+        assertThat(nestedCtx.getCustomData(String.class)).containsExactly(customData);
+      }
+      assertThat(ctx.getCustomData(String.class)).containsExactly(customData);
+    }
+  }
+
+  @Test
+  public void addCustomData_withCallback() {
+    Callback callback =
+        new Callback() {
+          @Override
+          public void callback() {}
+        };
+
+    try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+      assertThat(ctx.getCustomData(Callback.class)).isEmpty();
+      try (RefUpdateContext nestedCtx = RefUpdateContext.open(INIT_REPO)) {
+        nestedCtx.addCustomData(callback);
+        assertThat(nestedCtx.getCustomData(Callback.class)).containsExactly(callback);
+      }
+      assertThat(ctx.getCustomData(Callback.class)).containsExactly(callback);
+    }
+  }
+
+  @Test
+  public void clearCustomData() {
+    Callback callback =
+        new Callback() {
+          @Override
+          public void callback() {}
+        };
+
+    String customData = "customData";
+
+    try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+      assertThat(ctx.getCustomData(Callback.class)).isEmpty();
+      assertThat(ctx.getCustomData(String.class)).isEmpty();
+      try (RefUpdateContext nestedCtx = RefUpdateContext.open(INIT_REPO)) {
+        nestedCtx.addCustomData(callback);
+        nestedCtx.addCustomData(customData);
+        assertThat(nestedCtx.getCustomData(Callback.class)).containsExactly(callback);
+        assertThat(nestedCtx.getCustomData(String.class)).containsExactly(customData);
+
+        nestedCtx.clearCustomData(String.class);
+        assertThat(nestedCtx.getCustomData(Callback.class)).containsExactly(callback);
+        assertThat(nestedCtx.getCustomData(String.class)).isEmpty();
+      }
+      assertThat(ctx.getCustomData(Callback.class)).containsExactly(callback);
+
+      ctx.clearCustomData(Callback.class);
+      assertThat(ctx.getCustomData(Callback.class)).isEmpty();
+    }
+  }
+
+  private static interface Callback {
+    void callback();
+  }
 }

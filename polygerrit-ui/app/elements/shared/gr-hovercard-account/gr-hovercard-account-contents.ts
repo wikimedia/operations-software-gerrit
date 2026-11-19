@@ -202,7 +202,11 @@ export class GrHovercardAccountContents extends LitElement {
     if (this.change === undefined) {
       return nothing;
     }
-    const voteableText = computeVoteableText(this.change, this.account);
+    const voteableText = computeVoteableText(
+      this.change,
+      this.account,
+      this.selfAccount
+    );
     return html`
       ${voteableText
         ? html`
@@ -226,7 +230,6 @@ export class GrHovercardAccountContents extends LitElement {
         <gr-button
           class="removeReviewerOrCC"
           link
-          no-uppercase
           @click=${this.handleRemoveReviewerOrCC}
         >
           Remove ${this.computeReviewerOrCCText()}
@@ -236,7 +239,6 @@ export class GrHovercardAccountContents extends LitElement {
         <gr-button
           class="changeReviewerOrCC"
           link
-          no-uppercase
           @click=${this.handleChangeReviewerOrCCStatus}
         >
           ${this.computeChangeReviewerOrCCText()}
@@ -312,7 +314,7 @@ export class GrHovercardAccountContents extends LitElement {
 
   private renderNeedsAttention() {
     if (!(this.isAttentionEnabled && this.hasUserAttention)) return nothing;
-    const lastUpdate = getLastUpdate(this.account, this.change);
+    const lastUpdate = getLastUpdate(this.account, this.change?.attention_set);
     return html`
       <div class="attention">
         <div>
@@ -334,7 +336,11 @@ export class GrHovercardAccountContents extends LitElement {
         <div class="reason">
           <span class="title">Reason:</span>
           <span class="value">
-            ${getReason(this.serverConfig, this.account, this.change)}
+            ${getReason(
+              this.serverConfig,
+              this.account,
+              this.change?.attention_set
+            )}
           </span>
           ${lastUpdate
             ? html` (
@@ -356,10 +362,9 @@ export class GrHovercardAccountContents extends LitElement {
         <gr-button
           class="addToAttentionSet"
           link
-          no-uppercase
           @click=${this.handleClickAddToAttentionSet}
         >
-          Add to attention set
+          Add to Attention Set
         </gr-button>
       </div>
     `;
@@ -372,10 +377,9 @@ export class GrHovercardAccountContents extends LitElement {
         <gr-button
           class="removeFromAttentionSet"
           link
-          no-uppercase
           @click=${this.handleClickRemoveFromAttentionSet}
         >
-          Remove from attention set
+          Remove from Attention Set
         </gr-button>
       </div>
     `;
@@ -422,7 +426,7 @@ export class GrHovercardAccountContents extends LitElement {
   }
 
   get hasUserAttention() {
-    return hasAttention(this.account, this.change);
+    return hasAttention(this.account, this.change?.attention_set);
   }
 
   private getReviewerState(change: ChangeInfo) {

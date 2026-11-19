@@ -107,6 +107,7 @@ import {isImageDiff} from '../../../utils/diff-util';
 import {formStyles} from '../../../styles/form-styles';
 import {NormalizedFileInfo} from '../../change/gr-file-list/gr-file-list';
 import {configModelToken} from '../../../models/config/config-model';
+import {trimWithEllipsis} from '../../../utils/string-util';
 
 const LOADING_BLAME = 'Loading blame information. This may take a while ...';
 const LOADED_BLAME = 'Blame loaded';
@@ -248,6 +249,9 @@ export class GrDiffView extends LitElement {
   @state()
   commentsForPath: Comment[] = [];
 
+  @state()
+  isShowingEntireFile = false;
+
   // visible for testing
   reviewedFiles = new Set<string>();
 
@@ -268,6 +272,9 @@ export class GrDiffView extends LitElement {
   private readonly getConfigModel = resolve(this, configModelToken);
 
   private throttledToggleFileReviewed?: (e: KeyboardEvent) => void;
+
+  // Show the popup for navigating to next file keyboard shortcut only once
+  private hasShownNavigateToFileToast = new Map<string, boolean>();
 
   @state()
   cursor?: GrDiffCursor;
@@ -554,7 +561,7 @@ export class GrDiffView extends LitElement {
         }
         .headerSubject {
           margin-right: var(--spacing-m);
-          font-weight: var(--font-weight-bold);
+          font-weight: var(--font-weight-medium);
         }
         .patchRangeLeft {
           align-items: center;
@@ -610,11 +617,10 @@ export class GrDiffView extends LitElement {
         .editMode .hideOnEdit {
           display: none;
         }
-        .blameLoader,
         .fileNum {
           display: none;
         }
-        .blameLoader.show,
+        .blameLoader,
         .fileNum.show,
         .download,
         .preferences,
@@ -890,7 +896,9 @@ export class GrDiffView extends LitElement {
         <a href=${ifDefined(this.getChangeModel().changeUrl())}
           >${this.changeNum}</a
         ><span class="changeNumberColon">:</span>
-        <span class="headerSubject">${this.change?.subject}</span>
+        <span class="headerSubject"
+          >${trimWithEllipsis(this.change?.subject, 80)}</span
+        >
         <input
           id="reviewed"
           class="reviewed hideOnEdit"
@@ -1076,7 +1084,8 @@ export class GrDiffView extends LitElement {
   private renderRightControls() {
     const diffModeSelectorClass = !this.diff || this.diff.binary ? 'hide' : '';
     return html` <div class="rightControls">
-      ${this.renderSidebarTriggers()} ${this.renderBlameButton()}
+      ${this.renderSidebarTriggers()} ${this.renderShowEntireFileButton()}
+      ${this.renderBlameButton()}
       ${when(
         this.computeCanEdit(),
         () => html`
@@ -1086,7 +1095,7 @@ export class GrDiffView extends LitElement {
               link=""
               title="Edit current file"
               @click=${this.goToEditFile}
-              >edit</gr-button
+              >Edit</gr-button
             >
           </span>
         `
@@ -1146,24 +1155,44 @@ export class GrDiffView extends LitElement {
     </div>`;
   }
 
+  private renderShowEntireFileButton() {
+    if (isImageDiff(this.diff) || isMagicPath(this.path)) return;
+    return html`<gr-button
+      link=""
+      id="toggleEntireFile"
+      title=${this.createTitle(
+        Shortcut.TOGGLE_ALL_DIFF_CONTEXT,
+        ShortcutSection.DIFFS
+      )}
+      @click=${this.handleToggleAllDiffContext}
+      >${this.isShowingEntireFile
+        ? 'Hide Unchanged Lines'
+        : 'Show Entire File'}</gr-button
+    >`;
+  }
+
   private renderBlameButton() {
     if (!this.allowBlame) return;
-    const blameLoaderClass =
-      !isMagicPath(this.path) && !isImageDiff(this.diff) ? 'show' : '';
+    const showBlameLoader = !isMagicPath(this.path) && !isImageDiff(this.diff);
+    if (!showBlameLoader) return;
     let blameToggleLabel = 'Loading blame ...';
     if (!this.isBlameLoading) {
-      blameToggleLabel = this.isBlameLoaded ? 'Hide blame' : 'Show blame';
+      blameToggleLabel = this.isBlameLoaded ? 'Hide Blame' : 'Show Blame';
     }
-    return html` <span class="blameLoader ${blameLoaderClass}">
-      <gr-button
-        link=""
-        id="toggleBlame"
-        title=${this.createTitle(Shortcut.TOGGLE_BLAME, ShortcutSection.DIFFS)}
-        ?disabled=${this.isBlameLoading}
-        @click=${this.toggleBlame}
-        >${blameToggleLabel}</gr-button
-      >
-    </span>`;
+    return html`<span class="separator"></span
+      ><span class="blameLoader">
+        <gr-button
+          link=""
+          id="toggleBlame"
+          title=${this.createTitle(
+            Shortcut.TOGGLE_BLAME,
+            ShortcutSection.DIFFS
+          )}
+          ?disabled=${this.isBlameLoading}
+          @click=${this.toggleBlame}
+          >${blameToggleLabel}</gr-button
+        >
+      </span>`;
   }
 
   private renderDialogs() {
@@ -1332,10 +1361,15 @@ export class GrDiffView extends LitElement {
       this.navigateToUnreviewedFile(direction);
     } else {
       this.lastDisplayedNavigateToFileToast.set(direction, Date.now());
+      if (this.hasShownNavigateToFileToast.get(direction)) {
+        // Popup for "direction" has already been shown once
+        return;
+      }
       fireAlert(
         this,
         `Press ${shortcut} again to navigate to ${direction} unreviewed file`
       );
+      this.hasShownNavigateToFileToast.set(direction, true);
     }
   }
 
@@ -1504,7 +1538,7 @@ export class GrDiffView extends LitElement {
     }
 
     idx += direction;
-    // Redirect to the change view if noUp isn’t truthy and idx falls
+    // Redirect to the change view if noUp isn't truthy and idx falls
     // outside the bounds of [0, fileList.length).
     if (idx < 0 || idx > fileList.length - 1) {
       return {up: true};
@@ -1531,6 +1565,7 @@ export class GrDiffView extends LitElement {
     await this.diffHost.reload(true);
     this.reporting.diffViewDisplayed();
     if (this.isBlameLoaded) this.loadBlame();
+    this.isShowingEntireFile = this.diffHost?.isShowFullContext() ?? false;
   }
 
   /**
@@ -1928,6 +1963,7 @@ export class GrDiffView extends LitElement {
 
   private handleToggleAllDiffContext() {
     assertIsDefined(this.diffHost, 'diffHost');
+    this.isShowingEntireFile = !this.isShowingEntireFile;
     this.diffHost.toggleAllContext();
   }
 

@@ -31,6 +31,8 @@ import com.google.gerrit.acceptance.UseClockStep;
 import com.google.gerrit.acceptance.config.GerritConfig;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Project.NameKey;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.IndexDefinition;
 import com.google.gerrit.index.RefState;
@@ -45,8 +47,10 @@ import com.google.inject.Inject;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
+import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.Repository;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -154,7 +158,26 @@ public class LuceneChangeIndexerIT extends AbstractDaemonTest {
 
       createIndexWithStaleChangeAndReindex(changeIndexedCounter);
       assertThat(changeIndexedCounter.getTotalCount()).isEqualTo(1);
+
+      createIndexWithOneChangeMissingInNoteDb(changeIndexedCounter);
+      assertThat(changeIndexedCounter.getTotalCount()).isEqualTo(1);
+      assertThat(changeIndexedCounter.getTotalDeletions()).isEqualTo(1);
     }
+  }
+
+  @Test
+  public void deleteAllForProjectDeletesFromIndex() throws Exception {
+    createChange();
+    createChange();
+    createChange();
+
+    List<ChangeInfo> result = gApi.changes().query("project:" + project.get()).get();
+    assertThat(result).hasSize(3);
+
+    index.deleteAllForProject(project);
+
+    result = gApi.changes().query("project:" + project.get()).get();
+    assertThat(result).isEmpty();
   }
 
   private void createIndexWithMissingChangeAndReindex(ChangeIndexedCounter changeIndexedCounter)
@@ -179,6 +202,17 @@ public class LuceneChangeIndexerIT extends AbstractDaemonTest {
                 ObjectId.fromString("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"))));
     wrongChangeData.setRefStates(ImmutableSetMultimap.copyOf(refStates));
     index.replace(wrongChangeData);
+    changeIndexedCounter.clear();
+    reindexChanges();
+  }
+
+  private void createIndexWithOneChangeMissingInNoteDb(ChangeIndexedCounter changeIndexedCounter)
+      throws Exception {
+    PushOneCommit.Result res = createChange();
+    try (Repository repo = repoManager.openRepository(project);
+        TestRepository<Repository> testRepo = new TestRepository<>(repo)) {
+      testRepo.delete(RefNames.changeMetaRef(res.getChange().getId()));
+    }
     changeIndexedCounter.clear();
     reindexChanges();
   }

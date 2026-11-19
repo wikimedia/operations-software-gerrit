@@ -31,6 +31,7 @@ import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.permissions.RefPermission;
 import com.google.gerrit.server.project.BranchResource;
+import com.google.gerrit.server.project.NoSuchProjectException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.restapi.change.ReviewersUtil;
 import com.google.gerrit.server.restapi.change.ReviewersUtil.VisibilityControl;
@@ -39,7 +40,6 @@ import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.io.IOException;
 import java.util.List;
-import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Config;
 import org.kohsuke.args4j.Option;
 
@@ -93,8 +93,8 @@ public class SuggestBranchReviewers extends SuggestReviewers
       throws AuthException,
           BadRequestException,
           IOException,
-          ConfigInvalidException,
-          PermissionBackendException {
+          PermissionBackendException,
+          NoSuchProjectException {
     if (!self.get().isIdentifiedUser()) {
       throw new AuthException("Authentication required");
     }

@@ -38,7 +38,9 @@ import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.data.GlobalCapability;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.accounts.EmailInput;
 import com.google.gerrit.extensions.api.changes.ReviewerInput;
 import com.google.gerrit.extensions.client.ReviewerState;
@@ -430,18 +432,17 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void defaultReviewerSuggestion() throws Exception {
+  public void defaultReviewerSuggestion_suggestReviewersOfRecentChangesOfTheCaller()
+      throws Exception {
     TestAccount user1 = user("customuser1", "User1");
     TestAccount reviewer1 = user("customuser2", "User2");
     TestAccount reviewer2 = user("customuser3", "User3");
 
     requestScopeOperations.setApiUser(user1.id());
     String changeId1 = createChangeFromApi();
-
     reviewChange(changeId1, reviewer1);
 
     String changeId2 = createChangeFromApi();
-
     reviewChange(changeId2, reviewer1);
     reviewChange(changeId2, reviewer2);
 
@@ -460,10 +461,58 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void defaultReviewerSuggestionOnFirstChange() throws Exception {
+  public void defaultReviewerSuggestion_suggestReviewersOfRecentChangesInTheSameProject()
+      throws Exception {
+    TestAccount user1 = user("customuser1", "User1");
+    TestAccount reviewer1 = user("customuser2", "User2");
+    TestAccount reviewer2 = user("customuser3", "User3");
+
+    String changeId1 = createChangeFromApi();
+    reviewChange(changeId1, reviewer1);
+
+    String changeId2 = createChangeFromApi();
+    reviewChange(changeId2, reviewer1);
+    reviewChange(changeId2, reviewer2);
+
+    requestScopeOperations.setApiUser(user1.id());
+    List<SuggestedReviewerInfo> reviewers = suggestReviewers(createChangeFromApi(), "", 4);
+
+    // Since there are no previous changes of user1, reviewers of any recent changes of the same
+    // project are suggested.
+    assertThat(reviewers.stream().map(r -> r.account._accountId).collect(toList()))
+        .containsExactly(reviewer1.id().get(), reviewer2.id().get());
+  }
+
+  @Test
+  public void defaultReviewerSuggestion_suggestProjectOwners() throws Exception {
+    Account.Id projectOwner1 = accountOperations.newAccount().create();
+    Account.Id projectOwner2 = accountOperations.newAccount().create();
+    AccountGroup.UUID ownerGroup =
+        groupOperations
+            .newGroup()
+            .addMember(projectOwner1)
+            .visibleToAll(true)
+            .addMember(projectOwner2)
+            .create();
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.OWNER).ref(RefNames.REFS + "*").group(ownerGroup))
+        .update();
+
+    requestScopeOperations.setApiUser(user1.id());
+    List<SuggestedReviewerInfo> reviewers = suggestReviewers(createChangeFromApi(), "", 4);
+
+    // Since there are no previous changes in the project, the project owners are suggested.
+    assertThat(reviewers.stream().map(r -> r.account._accountId).collect(toList()))
+        .containsExactly(projectOwner1.get(), projectOwner2.get());
+  }
+
+  @Test
+  public void defaultReviewerSuggestionOnInitialChange() throws Exception {
     TestAccount user1 = user("customuser1", "User1");
     requestScopeOperations.setApiUser(user1.id());
-    List<SuggestedReviewerInfo> reviewers = suggestReviewers(createChange().getChangeId(), "", 4);
+    List<SuggestedReviewerInfo> reviewers = suggestReviewers(createChangeFromApi(), "", 4);
     assertThat(reviewers).isEmpty();
   }
 
@@ -491,6 +540,52 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
     assertReviewers(suggestReviewers(changeId, name), ImmutableList.of(foo1), ImmutableList.of());
     assertReviewers(
         suggestReviewers(changeId, /* query= */ ""), ImmutableList.of(foo1), ImmutableList.of());
+  }
+
+  @Test
+  public void recentReviewerBoostedByCaseInsensitiveMatchInRecommender() throws Exception {
+    requestScopeOperations.setApiUser(admin.id());
+
+    // User B: Also matches the query "john", but is NOT a recent reviewer
+    TestAccount userB_StandardMatch =
+        accountCreator.create(
+            name("userB_Standard"),
+            name("userB_StandardEmail") + "@example.com",
+            "john junior",
+            null);
+    gApi.accounts().id(userB_StandardMatch.id().get()).setActive(true);
+
+    // User A: Will be a recent reviewer. Their name requires a case-insensitive match
+    // by ReviewerRecommender for the query "john".
+    TestAccount userA_RecentReviewer =
+        accountCreator.create(
+            name("userA_Recent"), name("userA_RecentEmail") + "@example.com", "John Senior", null);
+    gApi.accounts().id(userA_RecentReviewer.id().get()).setActive(true);
+
+    // Make userA_RecentReviewer a reviewer on a previous change by admin.
+    String previousChangeId = createChange().getChangeId();
+    ReviewerInput addReviewerAsAdminInput = new ReviewerInput();
+    addReviewerAsAdminInput.reviewer = userA_RecentReviewer.email();
+    gApi.changes().id(previousChangeId).addReviewer(addReviewerAsAdminInput);
+
+    String targetChangeId = createChange().getChangeId();
+
+    // Query for reviewers with "john" (lowercase).
+    List<SuggestedReviewerInfo> suggestions = suggestReviewers(targetChangeId, "john", 5);
+
+    List<Account.Id> suggestedAccountIds =
+        suggestions.stream()
+            .filter(s -> s.account != null)
+            .map(s -> Account.id(s.account._accountId))
+            .collect(toList());
+
+    assertThat(suggestedAccountIds)
+        .containsAtLeast(userA_RecentReviewer.id(), userB_StandardMatch.id());
+
+    int indexOfUserA = suggestedAccountIds.indexOf(userA_RecentReviewer.id());
+    int indexOfUserB = suggestedAccountIds.indexOf(userB_StandardMatch.id());
+
+    assertThat(indexOfUserA).isLessThan(indexOfUserB);
   }
 
   @Test

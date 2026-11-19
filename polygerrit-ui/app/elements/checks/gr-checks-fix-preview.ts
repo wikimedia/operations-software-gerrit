@@ -19,6 +19,7 @@ import {changeModelToken} from '../../models/change/change-model';
 import {subscribe} from '../lit/subscription-controller';
 import {fire} from '../../utils/event-util';
 import {OpenFixPreviewEventDetail} from '../../types/events';
+import {userModelToken} from '../../models/user/user-model';
 
 /**
  * There is a certain overlap with `GrUserSuggestionsFix` which wraps
@@ -34,8 +35,8 @@ export class GrChecksFixPreview extends LitElement {
   @query('gr-suggestion-diff-preview')
   suggestionDiffPreview?: GrSuggestionDiffPreview;
 
-  @property({type: Object})
-  fixSuggestionInfo?: FixSuggestionInfo;
+  @property({type: Array})
+  fixSuggestionInfos?: FixSuggestionInfo[];
 
   @property({type: Number})
   patchSet?: PatchSetNumber;
@@ -56,7 +57,15 @@ export class GrChecksFixPreview extends LitElement {
 
   @state() isChangeMerged = false;
 
+  @state() isChangeAbandoned = false;
+
+  @state() loggedIn = false;
+
+  @state() selectedFixIdx = 0;
+
   private readonly getChangeModel = resolve(this, changeModelToken);
+
+  private readonly getUserModel = resolve(this, userModelToken);
 
   constructor() {
     super();
@@ -80,6 +89,16 @@ export class GrChecksFixPreview extends LitElement {
       () => this.getChangeModel().status$,
       status => (this.isChangeMerged = status === ChangeStatus.MERGED)
     );
+    subscribe(
+      this,
+      () => this.getChangeModel().status$,
+      status => (this.isChangeAbandoned = status === ChangeStatus.ABANDONED)
+    );
+    subscribe(
+      this,
+      () => this.getUserModel().loggedIn$,
+      loggedIn => (this.loggedIn = loggedIn)
+    );
   }
 
   static override get styles() {
@@ -99,6 +118,15 @@ export class GrChecksFixPreview extends LitElement {
         .header .title {
           flex: 1;
         }
+        .fix-picker {
+          display: flex;
+          align-items: center;
+          gap: var(--spacing-xs);
+        }
+        .fix-picker gr-button {
+          display: flex;
+          align-items: center;
+        }
         .loading {
           border: 1px solid var(--border-color);
           padding: var(--spacing-xl);
@@ -108,15 +136,39 @@ export class GrChecksFixPreview extends LitElement {
   }
 
   override render() {
-    if (!this.fixSuggestionInfo) return nothing;
+    if ((this.fixSuggestionInfos ?? []).length === 0) return nothing;
     return html`${this.renderHeader()}${this.renderDiff()}`;
   }
 
   private renderHeader() {
+    const fixSuggestionCount = this.fixSuggestionInfos?.length ?? 0;
     return html`
       <div class="header">
         <div class="title">
           <span>Attached Fix</span>
+          ${fixSuggestionCount > 1
+            ? html`
+                <div class="fix-picker">
+                  ${this.selectedFixIdx + 1} of ${fixSuggestionCount}
+                  <gr-button
+                    id="prevFix"
+                    link
+                    @click=${this.onPrevFixClick}
+                    ?disabled=${this.selectedFixIdx === 0}
+                  >
+                    <gr-icon icon="chevron_left"></gr-icon>
+                  </gr-button>
+                  <gr-button
+                    id="nextFix"
+                    link
+                    @click=${this.onNextFixClick}
+                    ?disabled=${this.selectedFixIdx === fixSuggestionCount - 1}
+                  >
+                    <gr-icon icon="chevron_right"></gr-icon>
+                  </gr-button>
+                </div>
+              `
+            : nothing}
         </div>
         <div>
           <gr-button
@@ -126,7 +178,7 @@ export class GrChecksFixPreview extends LitElement {
             .disabled=${!this.previewLoaded}
             @click=${this.showFix}
           >
-            Show fix side-by-side
+            Show Fix Side-By-Side
           </gr-button>
           <gr-button
             class="applyFix"
@@ -137,7 +189,7 @@ export class GrChecksFixPreview extends LitElement {
             @click=${this.applyFix}
             .title=${this.computeApplyFixTooltip()}
           >
-            Apply fix
+            Apply Fix
           </gr-button>
         </div>
       </div>
@@ -145,9 +197,11 @@ export class GrChecksFixPreview extends LitElement {
   }
 
   private renderDiff() {
+    const fixSuggestionInfo = this.fixSuggestionInfos?.[this.selectedFixIdx];
+    if (!fixSuggestionInfo) return;
     return html`
       <gr-suggestion-diff-preview
-        .fixSuggestionInfo=${this.fixSuggestionInfo}
+        .fixSuggestionInfo=${fixSuggestionInfo}
         .patchSet=${this.patchSet}
         .codeText=${'Loading fix preview ...'}
         @preview-loaded=${() => (this.previewLoaded = true)}
@@ -156,10 +210,10 @@ export class GrChecksFixPreview extends LitElement {
   }
 
   private showFix() {
-    if (!this.patchSet || !this.fixSuggestionInfo) return;
+    if (!this.patchSet || (this.fixSuggestionInfos ?? []).length === 0) return;
     const eventDetail: OpenFixPreviewEventDetail = {
       patchNum: this.patchSet,
-      fixSuggestions: [this.fixSuggestionInfo],
+      fixSuggestions: this.fixSuggestionInfos ?? [],
       onCloseFixPreviewCallbacks: [],
     };
     fire(this, 'open-fix-preview', eventDetail);
@@ -171,8 +225,12 @@ export class GrChecksFixPreview extends LitElement {
   private async applyFix() {
     const changeNum = this.changeNum;
     const basePatchNum = this.patchSet as BasePatchSetNum;
-    if (!changeNum || !basePatchNum || !this.fixSuggestionInfo) return;
-
+    if (
+      !changeNum ||
+      !basePatchNum ||
+      (this.fixSuggestionInfos ?? []).length === 0
+    )
+      return;
     this.applyingFix = true;
     try {
       await this.suggestionDiffPreview?.applyFix();
@@ -184,14 +242,37 @@ export class GrChecksFixPreview extends LitElement {
   private isApplyEditDisabled() {
     if (this.patchSet === undefined) return true;
     if (this.isChangeMerged) return true;
+    if (this.isChangeAbandoned) return true;
+    if (!this.loggedIn) return true;
     return !this.previewLoaded;
   }
 
   private computeApplyFixTooltip() {
     if (this.patchSet === undefined) return '';
     if (this.isChangeMerged) return 'Change is already merged';
+    if (this.isChangeAbandoned) return 'Change is abandoned';
     if (!this.previewLoaded) return 'Fix is still loading ...';
+    if (!this.loggedIn) return 'You must be logged in to apply a fix';
     return '';
+  }
+
+  private onPrevFixClick(e: Event) {
+    if (e) e.stopPropagation();
+    if (this.selectedFixIdx >= 1) {
+      this.selectedFixIdx -= 1;
+      this.previewLoaded = false;
+    }
+  }
+
+  private onNextFixClick(e: Event) {
+    if (e) e.stopPropagation();
+    if (
+      this.fixSuggestionInfos &&
+      this.selectedFixIdx < this.fixSuggestionInfos.length - 1
+    ) {
+      this.selectedFixIdx += 1;
+      this.previewLoaded = false;
+    }
   }
 }
 

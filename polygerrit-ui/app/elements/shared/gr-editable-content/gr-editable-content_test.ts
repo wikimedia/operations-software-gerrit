@@ -7,7 +7,7 @@ import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import './gr-editable-content';
 import {GrEditableContent} from './gr-editable-content';
-import {query, queryAndAssert} from '../../../test/test-utils';
+import {query, queryAndAssert, waitUntil} from '../../../test/test-utils';
 import {GrButton} from '../gr-button/gr-button';
 import {fixture, html, assert} from '@open-wc/testing';
 import {StorageService} from '../../../services/storage/gr-storage';
@@ -22,6 +22,8 @@ import {
   RevisionPatchSetNum,
 } from '../../../api/rest-api';
 import {changeViewModelToken} from '../../../models/views/change';
+import {IronAutogrowTextareaElement} from '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
+import {GrDialog} from '../gr-dialog/gr-dialog';
 
 const emails = [
   {
@@ -40,6 +42,7 @@ suite('gr-editable-content tests', () => {
 
   setup(async () => {
     element = await fixture(html`<gr-editable-content></gr-editable-content>`);
+    element.isUploader = true;
     await element.updateComplete;
     storageService = testResolver(storageServiceToken);
   });
@@ -62,7 +65,7 @@ suite('gr-editable-content tests', () => {
           >
             <div>
               <gr-icon icon="expand_more" small></gr-icon>
-              <span>Show all</span>
+              <span>Show All</span>
             </div>
           </gr-button>
           <div class="flex-space"></div>
@@ -308,6 +311,191 @@ suite('gr-editable-content tests', () => {
       assert.deepEqual(
         emailDropdown.items?.map(e => e.value),
         emails.map(e => e.email)
+      );
+    });
+  });
+
+  suite('format button', () => {
+    let element: GrEditableContent;
+
+    setup(async () => {
+      element = await fixture(
+        html`<gr-editable-content></gr-editable-content>`
+      );
+      element.editing = true;
+      await element.updateComplete;
+    });
+
+    test('toggles between Format and Undo', async () => {
+      const formatButton = queryAndAssert<GrButton>(
+        element,
+        'gr-button.format-button'
+      );
+
+      // Initially shows "Format"
+      assert.equal(formatButton.textContent?.trim(), 'Format');
+
+      // Set some content that needs formatting
+      element.newContent = 'line1    \n\nline2     \n\nline3';
+      await element.updateComplete;
+      element.updateFormatState(/* skipDebounce= */ true);
+      await element.updateComplete;
+
+      // Click format
+      formatButton.click();
+      await element.updateComplete;
+
+      // Button should now show "Undo"
+      assert.equal(formatButton.textContent?.trim(), 'Undo');
+
+      // Content should be formatted
+      assert.equal(element.newContent, 'line1\n\nline2\n\nline3');
+
+      // Click undo
+      formatButton.click();
+      await element.updateComplete;
+
+      // Button should show "Format" again
+      // assert.equal(formatButton.textContent?.trim(), 'Format');
+
+      // Content should be back to original
+      assert.equal(element.newContent, 'line1    \n\nline2     \n\nline3');
+    });
+
+    test('reverts to Format when content is modified after formatting', async () => {
+      const formatButton = queryAndAssert<GrButton>(
+        element,
+        'gr-button.format-button'
+      );
+
+      // Set content and format it
+      element.newContent = 'line1    \nline2     \nline3';
+      await element.updateComplete;
+      element.updateFormatState(/* skipDebounce= */ true);
+      await element.updateComplete;
+
+      formatButton.click();
+      await element.updateComplete;
+
+      assert.equal(formatButton.textContent?.trim(), 'Undo');
+
+      // Modify the content
+      element.newContent = 'line1\nline2\nline3\nline4';
+      await element.updateComplete;
+
+      // Button should show "Format" again
+      assert.equal(formatButton.textContent?.trim(), 'Format');
+    });
+
+    test('format button tooltip changes for Format/Undo states', async () => {
+      const formatButton = queryAndAssert<GrButton>(
+        element,
+        'gr-button.format-button'
+      );
+
+      // Set content that needs formatting
+      element.newContent = 'line1    \nline2     \nline3';
+      await element.updateComplete;
+      element.updateFormatState(/* skipDebounce= */ true);
+      await element.updateComplete;
+
+      // Initial Format tooltip
+      assert.include(formatButton.title, 'Automatically fixes formatting');
+
+      // Click format
+      formatButton.click();
+      await element.updateComplete;
+
+      // Undo tooltip
+      assert.equal(formatButton.title, 'Undo formatting changes');
+
+      // Click undo
+      formatButton.click();
+      await element.updateComplete;
+      element.updateFormatState(/* skipDebounce= */ true);
+      await element.updateComplete;
+
+      // Back to Format tooltip
+      assert.include(formatButton.title, 'Automatically fixes formatting');
+    });
+
+    test('disables format button when only current line needs formatting', async () => {
+      const formatButton = queryAndAssert<GrButton>(
+        element,
+        'gr-button.format-button'
+      );
+
+      element.newContent = 'line1\nline2    \nline3';
+      const textarea = queryAndAssert<IronAutogrowTextareaElement>(
+        element,
+        'iron-autogrow-textarea'
+      ).textarea;
+
+      textarea.setSelectionRange(7, 7); // Position cursor after "line2"
+      await element.updateComplete;
+      element.updateFormatState(/* skipDebounce= */ false);
+      await element.updateComplete;
+      await waitUntil(() => !!formatButton?.disabled);
+
+      // Format button should be disabled because only current line needs formatting
+      assert.isTrue(formatButton.disabled);
+      assert.include(formatButton.title, 'No format changes needed');
+    });
+
+    test('enables format button when other lines need formatting', async () => {
+      const formatButton = queryAndAssert<GrButton>(
+        element,
+        'gr-button.format-button'
+      );
+
+      element.newContent = 'line1    \nline2    \nline3    ';
+      const textarea = queryAndAssert<IronAutogrowTextareaElement>(
+        element,
+        'iron-autogrow-textarea'
+      ).textarea;
+
+      textarea.setSelectionRange(7, 7); // Position cursor after "line2"
+      await element.updateComplete;
+      element.updateFormatState(/* skipDebounce= */ false);
+      await element.updateComplete;
+      await waitUntil(() => !formatButton?.disabled);
+
+      // Format button should be enabled because other lines need formatting
+      assert.isFalse(formatButton.disabled);
+      assert.include(formatButton.title, 'Automatically fixes formatting');
+    });
+  });
+
+  suite('uploader confirm dialog', () => {
+    test('shows when user is not uploader', async () => {
+      element.isUploader = false;
+      element.editing = true;
+      await element.updateComplete;
+      const dialog = queryAndAssert<GrDialog>(
+        element,
+        '#uploaderConfirmDialog'
+      );
+      assert.dom.equal(
+        dialog,
+        `
+          <dialog id="uploaderConfirmDialog" tabindex="-1">
+            <gr-dialog confirm-label="Continue">
+              <div class="header" slot="header">Become Uploader</div>
+              <div class="main" slot="main">
+                <p>
+                  By editing the commit message, you will become the uploader of
+              the
+                  <br />
+                  new patch set. This means that your own approvals will be
+              ignored
+                  <br />
+                  for submit requirements that ignore uploader approvals.
+                </p>
+                <p>Do you want to continue?</p>
+              </div>
+            </gr-dialog>
+          </dialog>
+        `
       );
     });
   });

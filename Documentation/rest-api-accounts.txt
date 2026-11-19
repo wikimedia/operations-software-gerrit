@@ -19,6 +19,11 @@ link:user-search-accounts.html#_search_operators[query string] must be
 provided by the `q` parameter. The `n` parameter can be used to limit
 the returned results.
 
+[NOTE]
+Searching for accounts by email address can have different case sensitivity
+behavior depending on site configuration. See
+link:user-search-accounts.html#email[email operator] for details.
+
 As result a list of link:#account-info[AccountInfo] entities is
 returned.
 
@@ -194,7 +199,8 @@ returned that describes the created account.
 'DELETE /accounts/link:#account-id[\{account-id\}]'
 --
 
-Deletes the given account.
+Deletes the given account if config `enableDelete` under
+link:#config-gerrit.html#accounts[accounts] section is enbaled.
 
 Currently only supporting self deletion (regardless of the way
 link:#account-id[\{account-id\}] is provided).
@@ -3005,6 +3011,7 @@ for a user.
 |Field Name                 |        |Description
 |`project`                  |        |The name of the project.
 |`filter`                   |optional|A filter string to be applied to the project.
+|`problem`                  |optional|An error message when project is for example hidden or deleted.
 |`notify_new_changes`       |optional|Notify on new changes.
 |`notify_new_patch_sets`    |optional|Notify on new patch sets.
 |`notify_all_comments`      |optional|Notify on comments.

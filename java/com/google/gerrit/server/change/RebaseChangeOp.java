@@ -124,6 +124,7 @@ public class RebaseChangeOp implements BatchUpdateOp {
   private String mergeStrategy;
   private boolean verifyNeedsRebase = true;
   private final boolean useDiff3;
+  private final boolean useGitattributesForMerge;
 
   private CodeReviewCommit rebasedCommit;
   private PatchSet.Id rebasedPatchSetId;
@@ -208,6 +209,7 @@ public class RebaseChangeOp implements BatchUpdateOp {
     this.projectName = notes.getProjectName();
     this.originalPatchSet = originalPatchSet;
     this.useDiff3 = cfg.getBoolean("change", null, "diff3ConflictView", false);
+    this.useGitattributesForMerge = MergeUtil.useGitattributesForMerge(cfg);
   }
 
   @CanIgnoreReturnValue
@@ -362,11 +364,15 @@ public class RebaseChangeOp implements BatchUpdateOp {
             .setDescription("Rebase")
             .setFireRevisionCreated(fireRevisionCreated)
             .setCheckAddPatchSetPermission(checkAddPatchSetPermission)
-            .setValidate(validate)
             .setSendEmail(sendEmail)
             // The votes are automatically copied and they don't count as copied votes. See
             // method's javadoc.
             .setStoreCopiedVotes(storeCopiedVotes);
+    rebasedCommit.getConflicts().ifPresent(patchSetInserter::setConflicts);
+
+    if (!validate) {
+      patchSetInserter.disableValidation();
+    }
 
     if (!rebasedCommit.getFilesWithGitConflicts().isEmpty()
         && !notes.getChange().isWorkInProgress()) {
@@ -496,10 +502,19 @@ public class RebaseChangeOp implements BatchUpdateOp {
     }
 
     DirCache dc = DirCache.newInCore();
-    if (allowConflicts && merger instanceof ResolveMerger) {
-      // The DirCache must be set on ResolveMerger before calling
-      // ResolveMerger#merge(AnyObjectId...) otherwise the entries in DirCache don't get populated.
-      ((ResolveMerger) merger).setDirCache(dc);
+    if (merger instanceof ResolveMerger) {
+      if (useGitattributesForMerge) {
+        // We need to set the attributes provider before attempting the merge in order to read and
+        // honor gitattributes merge settings correctly
+        ((ResolveMerger) merger)
+            .setAttributesNodeProvider(ctx.getRepoView().getAttributesNodeProvider());
+      }
+      if (allowConflicts) {
+        // The DirCache must be set on ResolveMerger before calling
+        // ResolveMerger#merge(AnyObjectId...) otherwise the entries in DirCache don't get
+        // populated.
+        ((ResolveMerger) merger).setDirCache(dc);
+      }
     }
 
     boolean success = merger.merge(original, base);
@@ -601,11 +616,11 @@ public class RebaseChangeOp implements BatchUpdateOp {
     if (matchAuthorToCommitterDate) {
       cb.setAuthor(
           new PersonIdent(
-              cb.getAuthor(), cb.getCommitter().getWhen(), cb.getCommitter().getTimeZone()));
+              cb.getAuthor(), cb.getCommitter().getWhenAsInstant(), cb.getCommitter().getZoneId()));
     }
     ObjectId objectId = ctx.getInserter().insert(cb);
     CodeReviewCommit commit = ((CodeReviewRevWalk) ctx.getRevWalk()).parseCommit(objectId);
-    commit.setFilesWithGitConflicts(filesWithGitConflicts);
+    commit.setConflicts(original, base, filesWithGitConflicts);
     logger.atFine().log("rebased commit=%s", commit.name());
     return commit;
   }

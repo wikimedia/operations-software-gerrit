@@ -69,9 +69,6 @@ export class ServiceWorkerInstaller extends Model<ServiceWorkerInstallerState> {
     private readonly userModel: UserModel
   ) {
     super({initialized: false, shouldShowPrompt: false});
-    if (!this.flagsService.isEnabled(KnownExperimentId.PUSH_NOTIFICATIONS)) {
-      return;
-    }
     this.userModel.account$.subscribe(acc => (this.account = acc));
     this.userModel.preferences$.subscribe(prefs => {
       if (
@@ -85,8 +82,7 @@ export class ServiceWorkerInstaller extends Model<ServiceWorkerInstallerState> {
           navigator.serviceWorker.controller?.postMessage({
             type: ServiceWorkerMessageType.USER_PREFERENCE_CHANGE,
             allowBrowserNotificationsPreference:
-              this.allowBrowserNotificationsPreference &&
-              this.flagsService.isEnabled(KnownExperimentId.PUSH_NOTIFICATIONS),
+              this.allowBrowserNotificationsPreference,
           });
         }
       }
@@ -104,9 +100,6 @@ export class ServiceWorkerInstaller extends Model<ServiceWorkerInstallerState> {
 
   private async init() {
     if (this.initialized) return;
-    if (!this.flagsService.isEnabled(KnownExperimentId.PUSH_NOTIFICATIONS)) {
-      return;
-    }
     if (!this.areNotificationsEnabled()) return;
 
     if (!('serviceWorker' in navigator)) {
@@ -134,9 +127,6 @@ export class ServiceWorkerInstaller extends Model<ServiceWorkerInstallerState> {
   // private, used in test
   shouldShowPrompt(): boolean {
     if (!this.initialized) return false;
-    if (!this.flagsService.isEnabled(KnownExperimentId.PUSH_NOTIFICATIONS)) {
-      return false;
-    }
     if (!this.areNotificationsEnabled()) return false;
     return Notification.permission === 'default';
   }

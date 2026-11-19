@@ -22,6 +22,7 @@ import static com.google.gerrit.acceptance.GitUtil.pushHead;
 import static com.google.gerrit.acceptance.PushOneCommit.FILE_CONTENT;
 import static com.google.gerrit.acceptance.PushOneCommit.FILE_NAME;
 import static com.google.gerrit.acceptance.PushOneCommit.SUBJECT;
+import static com.google.gerrit.acceptance.TestExtensions.TestCommitValidationListener;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowCapability;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowLabel;
@@ -155,6 +156,7 @@ import com.google.gerrit.extensions.common.LabelInfo;
 import com.google.gerrit.extensions.common.RevisionInfo;
 import com.google.gerrit.extensions.common.TrackingIdInfo;
 import com.google.gerrit.extensions.events.AttentionSetListener;
+import com.google.gerrit.extensions.events.ChangeIndexedListener;
 import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
@@ -171,11 +173,7 @@ import com.google.gerrit.server.account.AccountControl;
 import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.change.ChangeMessages;
 import com.google.gerrit.server.change.ChangeResource;
-import com.google.gerrit.server.events.CommitReceivedEvent;
 import com.google.gerrit.server.git.ChangeMessageModifier;
-import com.google.gerrit.server.git.validators.CommitValidationException;
-import com.google.gerrit.server.git.validators.CommitValidationListener;
-import com.google.gerrit.server.git.validators.CommitValidationMessage;
 import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.index.change.ChangeIndex;
 import com.google.gerrit.server.index.change.ChangeIndexCollection;
@@ -217,6 +215,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -289,6 +288,44 @@ public class ChangeIT extends AbstractDaemonTest {
     assertThat(c.owner.username).isNull();
     assertThat(c.owner.avatars).isNull();
     assertThat(c.submissionId).isNull();
+  }
+
+  @Test
+  public void cannotGetInvisibleChange() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    // Remove read access
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.READ).ref("refs/heads/*").group(REGISTERED_USERS))
+        .update();
+
+    requestScopeOperations.setApiUser(user.id());
+    ResourceNotFoundException thrown =
+        assertThrows(
+            ResourceNotFoundException.class,
+            () -> gApi.changes().id(project.get(), r.getChange().getId().get()).get());
+    assertThat(thrown)
+        .hasMessageThat()
+        .isEqualTo(String.format("Not found: %s~%d", project.get(), r.getChange().getId().get()));
+  }
+
+  @Test
+  public void adminCanGetChangeWithoutExplicitReadPermission() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    // Remove read access
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.READ).ref("refs/heads/*").group(REGISTERED_USERS))
+        .update();
+
+    requestScopeOperations.setApiUser(admin.id());
+    ChangeInfo changeInfo = gApi.changes().id(project.get(), r.getChange().getId().get()).get();
+    assertThat(changeInfo.id)
+        .isEqualTo(String.format("%s~%d", project.get(), r.getChange().getId().get()));
   }
 
   @Test
@@ -1178,6 +1215,31 @@ public class ChangeIT extends AbstractDaemonTest {
     try (Repository repo = repoManager.openRepository(project)) {
       assertThat(repo.getRefDatabase().getRefsByPrefix(expected)).isEmpty();
     }
+  }
+
+  @Test
+  public void deleteAllForProjectRemovesAllProjectChangesFromIndex() throws Exception {
+    createChange();
+    createChange();
+    assertThat(query("project:{" + project.get() + "} ")).hasSize(2);
+
+    indexer.deleteAllForProject(project);
+
+    assertThat(query("project:{" + project.get() + "} ")).isEmpty();
+  }
+
+  @Test
+  public void deleteAllForProjectNotifiesListeners() {
+    TestDeleteAllForProjectListener deleteAllForProjectsListener =
+        new TestDeleteAllForProjectListener();
+
+    try (Registration ignore =
+        extensionRegistry.newRegistration().add(deleteAllForProjectsListener)) {
+
+      indexer.deleteAllForProject(project);
+    }
+
+    assertThat(deleteAllForProjectsListener.getFiredCount()).isEqualTo(1);
   }
 
   @Test
@@ -3001,6 +3063,33 @@ public class ChangeIT extends AbstractDaemonTest {
     AuthException thrown =
         assertThrows(
             AuthException.class, () -> gApi.changes().id(r.getChangeId()).topic("mytopic"));
+    assertThat(thrown).hasMessageThat().contains("edit topic name not permitted");
+  }
+
+  @Test
+  public void deleteTopicWithoutPermissionNotAllowed() throws Exception {
+    PushOneCommit.Result r = createChange();
+    assertThat(gApi.changes().id(r.getChangeId()).topic()).isEqualTo("");
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.EDIT_TOPIC_NAME).ref("refs/heads/master").group(REGISTERED_USERS))
+        .update();
+    requestScopeOperations.setApiUser(user.id());
+    gApi.changes().id(r.getChangeId()).topic("mytopic");
+    assertThat(gApi.changes().id(r.getChangeId()).topic()).isEqualTo("mytopic");
+    requestScopeOperations.setApiUser(admin.id());
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .remove(
+            permissionKey(Permission.EDIT_TOPIC_NAME)
+                .ref("refs/heads/master")
+                .group(REGISTERED_USERS))
+        .update();
+    requestScopeOperations.setApiUser(user.id());
+    AuthException thrown =
+        assertThrows(AuthException.class, () -> gApi.changes().id(r.getChangeId()).topic(""));
     assertThat(thrown).hasMessageThat().contains("edit topic name not permitted");
   }
 
@@ -5105,18 +5194,26 @@ public class ChangeIT extends AbstractDaemonTest {
     }
   }
 
-  private void voteLabel(String changeId, String labelName, int score) throws RestApiException {
-    gApi.changes().id(changeId).current().review(new ReviewInput().label(labelName, score));
-  }
-
-  private static class TestCommitValidationListener implements CommitValidationListener {
-    public CommitReceivedEvent receiveEvent;
+  public static class TestDeleteAllForProjectListener implements ChangeIndexedListener {
+    private final AtomicInteger firedCount = new AtomicInteger(0);
 
     @Override
-    public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent receiveEvent)
-        throws CommitValidationException {
-      this.receiveEvent = receiveEvent;
-      return ImmutableList.of();
+    public void onChangeIndexed(String projectName, int id) {}
+
+    @Override
+    public void onChangeDeleted(int id) {}
+
+    @Override
+    public void onAllChangesDeletedForProject(String projectName) {
+      firedCount.incrementAndGet();
     }
+
+    public int getFiredCount() {
+      return firedCount.get();
+    }
+  }
+
+  private void voteLabel(String changeId, String labelName, int score) throws RestApiException {
+    gApi.changes().id(changeId).current().review(new ReviewInput().label(labelName, score));
   }
 }

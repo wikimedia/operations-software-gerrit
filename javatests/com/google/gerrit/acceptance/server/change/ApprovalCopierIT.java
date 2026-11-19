@@ -38,6 +38,7 @@ import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.TestAccount;
+import com.google.gerrit.acceptance.config.GerritConfig;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.entities.Account;
@@ -126,10 +127,10 @@ public class ApprovalCopierIT extends AbstractDaemonTest {
     try (Repository repo = repoManager.openRepository(project);
         ObjectInserter ins = repo.newObjectInserter();
         ObjectReader reader = ins.newReader();
-        RevWalk revWalk = new RevWalk(reader)) {
+        RevWalk revWalk = new RevWalk(reader);
+        RepoView repoView = new RepoView(repo, revWalk, ins)) {
       ApprovalCopier.Result approvalCopierResult =
-          approvalCopier.forPatchSet(
-              changeData.notes(), changeData.currentPatchSet(), new RepoView(repo, revWalk, ins));
+          approvalCopier.forPatchSet(changeData.notes(), changeData.currentPatchSet(), repoView);
       assertThat(approvalCopierResult.copiedApprovals()).isEmpty();
       assertThat(approvalCopierResult.outdatedApprovals()).isEmpty();
     }
@@ -229,6 +230,120 @@ public class ApprovalCopierIT extends AbstractDaemonTest {
         assertThat(approvalCopierResult.copiedApprovals(), LabelId.VERIFIED, user.id());
     verifiedApprovalSubject.hasPassingAtomsThat().containsExactly("is:MIN");
     verifiedApprovalSubject.hasFailingAtomsThat().isEmpty();
+  }
+
+  @Test
+  @GerritConfig(name = "label.Code-Review.labelCopyRestriction", value = "changekind:REWORK")
+  public void forPatchSet_copyRestricted() throws Exception {
+    PushOneCommit.Result r = createChange();
+    PatchSet.Id patchSet1Id = r.getPatchSetId();
+
+    // Add some approvals that are normally copied.
+    vote(r.getChangeId(), admin, LabelId.CODE_REVIEW, -2);
+    vote(r.getChangeId(), user, LabelId.VERIFIED, -1);
+
+    r = amendChange(r.getChangeId(), "refs/for/master", admin, testRepo);
+    r.assertOkStatus();
+    PatchSet.Id patchSet2Id = r.getPatchSetId();
+
+    ApprovalCopier.Result approvalCopierResult =
+        invokeApprovalCopierForCurrentPatchSet(
+            r.getChange().getId(), /* expectedCurrentPatchSetNum= */ 2);
+    assertThatList(approvalCopierResult.copiedApprovals())
+        .comparingElementsUsing(hasTestId())
+        .containsExactly(
+            PatchSetApprovalTestId.create(patchSet2Id, user.id(), LabelId.VERIFIED, -1));
+    assertThatList(approvalCopierResult.outdatedApprovals())
+        .comparingElementsUsing(hasTestId())
+        .containsExactly(
+            PatchSetApprovalTestId.create(patchSet1Id, admin.id(), LabelId.CODE_REVIEW, -2));
+
+    // Code review evaluated additional restriction
+    ApprovalDataSubject codeReviewApprovalSubject =
+        assertThat(approvalCopierResult.outdatedApprovals(), LabelId.CODE_REVIEW, admin.id());
+    codeReviewApprovalSubject.hasPassingAtomsThat().containsExactly("is:MIN", "changekind:REWORK");
+    codeReviewApprovalSubject
+        .hasFailingAtomsThat()
+        .containsExactly("changekind:NO_CHANGE", "changekind:TRIVIAL_REBASE");
+
+    // Verified is unaffected
+    ApprovalDataSubject verifiedApprovalSubject =
+        assertThat(approvalCopierResult.copiedApprovals(), LabelId.VERIFIED, user.id());
+    verifiedApprovalSubject.hasPassingAtomsThat().containsExactly("is:MIN");
+    verifiedApprovalSubject.hasFailingAtomsThat().isEmpty();
+  }
+
+  @Test
+  @GerritConfig(name = "label.Code-Review.labelCopyEnforcement", value = "is:NEGATIVE")
+  public void forPatchSet_copyEnforced() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    // Add code-review approval that is normally not copied.
+    vote(r.getChangeId(), admin, LabelId.CODE_REVIEW, -1);
+    vote(r.getChangeId(), user, LabelId.VERIFIED, -1);
+
+    r = amendChange(r.getChangeId(), "refs/for/master", admin, testRepo);
+    r.assertOkStatus();
+    PatchSet.Id patchSet2Id = r.getPatchSetId();
+
+    ApprovalCopier.Result approvalCopierResult =
+        invokeApprovalCopierForCurrentPatchSet(
+            r.getChange().getId(), /* expectedCurrentPatchSetNum= */ 2);
+    assertThatList(approvalCopierResult.copiedApprovals())
+        .comparingElementsUsing(hasTestId())
+        .containsExactly(
+            PatchSetApprovalTestId.create(patchSet2Id, user.id(), LabelId.VERIFIED, -1),
+            PatchSetApprovalTestId.create(patchSet2Id, admin.id(), LabelId.CODE_REVIEW, -1));
+    assertThatList(approvalCopierResult.outdatedApprovals()).isEmpty();
+
+    // Code review evaluated additional "forced copy" rule
+    ApprovalDataSubject codeReviewApprovalSubject =
+        assertThat(approvalCopierResult.copiedApprovals(), LabelId.CODE_REVIEW, admin.id());
+    codeReviewApprovalSubject.hasPassingAtomsThat().containsExactly("is:NEGATIVE");
+    codeReviewApprovalSubject
+        .hasFailingAtomsThat()
+        .containsExactly("changekind:NO_CHANGE", "changekind:TRIVIAL_REBASE", "is:MIN");
+
+    // Verified is unaffected
+    ApprovalDataSubject verifiedApprovalSubject =
+        assertThat(approvalCopierResult.copiedApprovals(), LabelId.VERIFIED, user.id());
+    verifiedApprovalSubject.hasPassingAtomsThat().containsExactly("is:MIN");
+    verifiedApprovalSubject.hasFailingAtomsThat().isEmpty();
+  }
+
+  @Test
+  @GerritConfig(name = "label.Code-Review.labelCopyRestriction", value = "changekind:REWORK")
+  @GerritConfig(name = "label.Code-Review.labelCopyEnforcement", value = "is:NEGATIVE")
+  public void forPatchSet_enforceWinsOverRestriction() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    // Add code-review approval that is normally not copied.
+    vote(r.getChangeId(), admin, LabelId.CODE_REVIEW, -1);
+    vote(r.getChangeId(), user, LabelId.VERIFIED, -1);
+
+    r = amendChange(r.getChangeId(), "refs/for/master", admin, testRepo);
+    r.assertOkStatus();
+    PatchSet.Id patchSet2Id = r.getPatchSetId();
+
+    ApprovalCopier.Result approvalCopierResult =
+        invokeApprovalCopierForCurrentPatchSet(
+            r.getChange().getId(), /* expectedCurrentPatchSetNum= */ 2);
+    assertThatList(approvalCopierResult.copiedApprovals())
+        .comparingElementsUsing(hasTestId())
+        .containsExactly(
+            PatchSetApprovalTestId.create(patchSet2Id, user.id(), LabelId.VERIFIED, -1),
+            PatchSetApprovalTestId.create(patchSet2Id, admin.id(), LabelId.CODE_REVIEW, -1));
+    assertThatList(approvalCopierResult.outdatedApprovals()).isEmpty();
+
+    // Code review evaluated both "forced" rule, but "forced copy" won
+    ApprovalDataSubject codeReviewApprovalSubject =
+        assertThat(approvalCopierResult.copiedApprovals(), LabelId.CODE_REVIEW, admin.id());
+    codeReviewApprovalSubject
+        .hasPassingAtomsThat()
+        .containsExactly("is:NEGATIVE", "changekind:REWORK");
+    codeReviewApprovalSubject
+        .hasFailingAtomsThat()
+        .containsExactly("changekind:NO_CHANGE", "changekind:TRIVIAL_REBASE", "is:MIN");
   }
 
   @Test
@@ -459,9 +574,9 @@ public class ApprovalCopierIT extends AbstractDaemonTest {
     try (Repository repo = repoManager.openRepository(project);
         ObjectInserter ins = repo.newObjectInserter();
         ObjectReader reader = ins.newReader();
-        RevWalk revWalk = new RevWalk(reader)) {
-      return approvalCopier.forPatchSet(
-          changeData.notes(), changeData.currentPatchSet(), new RepoView(repo, revWalk, ins));
+        RevWalk revWalk = new RevWalk(reader);
+        RepoView repoView = new RepoView(repo, revWalk, ins)) {
+      return approvalCopier.forPatchSet(changeData.notes(), changeData.currentPatchSet(), repoView);
     }
   }
 
@@ -514,13 +629,17 @@ public class ApprovalCopierIT extends AbstractDaemonTest {
     public ListSubject<StringSubject, String> hasPassingAtomsThat() {
       return check("passingAtoms()")
           .about(elements())
-          .that(approvalData().passingAtoms().asList(), StandardSubjectBuilder::that);
+          .that(
+              approvalData().approvalCopyResult().passingAtoms().asList(),
+              StandardSubjectBuilder::that);
     }
 
     public ListSubject<StringSubject, String> hasFailingAtomsThat() {
       return check("failingAtoms()")
           .about(elements())
-          .that(approvalData().failingAtoms().asList(), StandardSubjectBuilder::that);
+          .that(
+              approvalData().approvalCopyResult().failingAtoms().asList(),
+              StandardSubjectBuilder::that);
     }
 
     private ApprovalCopier.Result.PatchSetApprovalData approvalData() {

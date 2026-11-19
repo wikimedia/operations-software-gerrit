@@ -16,11 +16,11 @@ import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {fire, fireAlert} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
 import {debounce, DelayedTask} from '../../../utils/async-util';
-import {assertIsDefined, queryAndAssert} from '../../../utils/common-util';
+import {assertIsDefined} from '../../../utils/common-util';
 import {IronAutogrowTextareaElement} from '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import {Interaction} from '../../../constants/reporting';
 import {LitElement, html} from 'lit';
-import {customElement, property, state} from 'lit/decorators.js';
+import {customElement, property, state, query} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {css} from 'lit';
 import {PropertyValues} from 'lit';
@@ -45,9 +45,17 @@ import {resolve} from '../../../models/dependency';
 import {formStyles} from '../../../styles/form-styles';
 import {changeViewModelToken} from '../../../models/views/change';
 import {SpecialFilePath} from '../../../constants/constants';
+import {
+  detectFormattingErrorsInString,
+  ErrorType,
+  formatCommitMessageString,
+  FormattingError,
+} from '../../../utils/commit-message-formatter-util';
+import {modalStyles} from '../../../styles/gr-modal-styles';
 
 const RESTORED_MESSAGE = 'Content restored from a previous edit.';
 const STORAGE_DEBOUNCE_INTERVAL_MS = 400;
+const DEBOUNCE_DELAY_MS = 700;
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -63,13 +71,16 @@ declare global {
   }
 }
 
+/**
+ * Fire alert when 'Content restored from a previous edit (from gr-storage)
+ */
 @customElement('gr-editable-content')
 export class GrEditableContent extends LitElement {
-  /**
-   * Fired when content is restored from storage.
-   *
-   * @event show-alert
-   */
+  @query('iron-autogrow-textarea')
+  private textarea?: IronAutogrowTextareaElement;
+
+  @query('#uploaderConfirmDialog')
+  private readonly uploaderConfirmDialog?: HTMLDialogElement;
 
   @property({type: String})
   content?: string;
@@ -118,6 +129,8 @@ export class GrEditableContent extends LitElement {
 
   @state() patchNum?: RevisionPatchSetNum;
 
+  @state() isUploader = false;
+
   private readonly restApiService = getAppContext().restApiService;
 
   private readonly getChangeModel = resolve(this, changeModelToken);
@@ -132,6 +145,17 @@ export class GrEditableContent extends LitElement {
 
   // Tests use this so needs to be non private
   storeTask?: DelayedTask;
+
+  private formatCheckTask?: DelayedTask;
+
+  @state() private formatDisabled = true;
+
+  @state() private formattedErrors: FormattingError[] = [];
+
+  @state() private showFormattedErrors = false;
+
+  // Used to undo formatting
+  @state() private lastFormattedContent?: string;
 
   constructor() {
     super();
@@ -160,6 +184,11 @@ export class GrEditableContent extends LitElement {
       () => this.getChangeModel().patchNum$,
       x => (this.patchNum = x)
     );
+    subscribe(
+      this,
+      () => this.getChangeModel().isUploader$,
+      x => (this.isUploader = x)
+    );
   }
 
   override disconnectedCallback() {
@@ -169,7 +198,16 @@ export class GrEditableContent extends LitElement {
 
   override willUpdate(changedProperties: PropertyValues) {
     if (changedProperties.has('editing')) this.editingChanged();
-    if (changedProperties.has('newContent')) this.newContentChanged();
+    if (changedProperties.has('newContent')) {
+      this.updateFormatState();
+      this.updateStorageWithNewContent();
+      if (
+        this.lastFormattedContent &&
+        this.newContent !== formatCommitMessageString(this.lastFormattedContent)
+      ) {
+        this.lastFormattedContent = undefined;
+      }
+    }
     if (changedProperties.has('content')) this.contentChanged();
   }
 
@@ -178,6 +216,7 @@ export class GrEditableContent extends LitElement {
       sharedStyles,
       formStyles,
       fontStyles,
+      modalStyles,
       css`
         :host {
           display: block;
@@ -210,6 +249,7 @@ export class GrEditableContent extends LitElement {
         .editButtons {
           display: flex;
           justify-content: space-between;
+          align-items: center;
         }
         .show-all-container {
           background-color: var(--view-background-color);
@@ -255,6 +295,12 @@ export class GrEditableContent extends LitElement {
         gr-button {
           padding: var(--spacing-xs);
         }
+        .format-button {
+          margin-right: var(--spacing-l);
+        }
+        gr-icon.warning {
+          color: var(--warning-foreground);
+        }
       `,
     ];
   }
@@ -269,6 +315,7 @@ export class GrEditableContent extends LitElement {
         ${this.renderViewer()} ${this.renderEditor()} ${this.renderButtons()}
         <gr-endpoint-slot name="above-actions"></gr-endpoint-slot>
       </gr-endpoint-decorator>
+      ${this.renderUploaderConfirmDialog()}
     `;
   }
 
@@ -327,7 +374,7 @@ export class GrEditableContent extends LitElement {
                   this.commitCollapsed,
                   () => html`<gr-icon icon="expand_more" small></gr-icon>`
                 )}
-                <span>${this.commitCollapsed ? 'Show all' : 'Show less'}</span>
+                <span>${this.commitCollapsed ? 'Show All' : 'Show Less'}</span>
               </div>
             </gr-button>
             <div class="flex-space"></div>
@@ -362,6 +409,27 @@ export class GrEditableContent extends LitElement {
             <span></div>`
             )}
             <div class="editButtons">
+              ${when(
+                this.showFormattedErrors,
+                () => html`<gr-tooltip-content
+                  .title=${this.formattedErrors
+                    .map(e => `${e.line ? `Line ${e.line}: ` : ''}${e.message}`)
+                    .join('\n')}
+                  ><gr-icon class="warning" icon="warning" filled></gr-icon
+                ></gr-tooltip-content>`
+              )}
+              <gr-button
+                link
+                class="format-button"
+                @click=${this.handleFormat}
+                ?disabled=${this.formatDisabled && !this.lastFormattedContent}
+                .title=${this.computeFormatButtonTooltip(
+                  this.formatDisabled,
+                  this.formattedErrors,
+                  !!this.lastFormattedContent
+                )}
+                >${this.lastFormattedContent ? 'Undo' : 'Format'}</gr-button
+              >
               <gr-button
                 link
                 class="cancel-button"
@@ -383,6 +451,31 @@ export class GrEditableContent extends LitElement {
     `;
   }
 
+  private renderUploaderConfirmDialog() {
+    if (this.isUploader) return nothing;
+    return html`
+      <dialog id="uploaderConfirmDialog" tabindex="-1">
+        <gr-dialog
+          confirm-label="Continue"
+          @confirm=${this.handleUploaderConfirm}
+          @cancel=${this.handleUploaderCancel}
+        >
+          <div class="header" slot="header">Become Uploader</div>
+          <div class="main" slot="main">
+            <p>
+              By editing the commit message, you will become the uploader of
+              the<br />
+              new patch set. This means that your own approvals will be
+              ignored<br />
+              for submit requirements that ignore uploader approvals.
+            </p>
+            <p>Do you want to continue?</p>
+          </div>
+        </gr-dialog>
+      </dialog>
+    `;
+  }
+
   contentChanged() {
     /* A changed content means that either a different change has been loaded
      * or new content was saved. Either way, let's reset the component.
@@ -395,13 +488,53 @@ export class GrEditableContent extends LitElement {
   }
 
   focusTextarea() {
-    queryAndAssert<IronAutogrowTextareaElement>(
-      this,
-      'iron-autogrow-textarea'
-    ).textarea.focus();
+    this.textarea?.textarea.focus();
   }
 
-  newContentChanged() {
+  /**
+   * We update enable/disable format button, showing formatted errors and
+   * list of formatting errors.
+   * @param skipDebounce - this skip debounce and other filtering methods for
+   * removing distraction. It's used after pressing format button for example.
+   */
+  updateFormatState(skipDebounce = false) {
+    if (!this.newContent) return;
+
+    if (skipDebounce) {
+      this.formatDisabled =
+        formatCommitMessageString(this.newContent) === this.newContent;
+      this.formattedErrors = detectFormattingErrorsInString(this.newContent);
+      this.showFormattedErrors = this.formattedErrors.length > 0;
+      return;
+    }
+
+    /**
+     * To make enable/disable button and icon for show formatted errors less
+     * distracting we use debounce and we filter out errors for the currently
+     * being edited line.
+     */
+    this.formatCheckTask = debounce(
+      this.formatCheckTask,
+      () => {
+        this.formattedErrors = detectFormattingErrorsInString(this.newContent);
+        const filteredFormattedErrors = this.filterActiveLineErrors(
+          this.formattedErrors
+        );
+        this.showFormattedErrors = filteredFormattedErrors.length > 0;
+
+        const isOnlyCurrentLineFormatting =
+          filteredFormattedErrors.length === 0 &&
+          this.formattedErrors.length > 0;
+
+        this.formatDisabled =
+          formatCommitMessageString(this.newContent) === this.newContent ||
+          isOnlyCurrentLineFormatting;
+      },
+      DEBOUNCE_DELAY_MS
+    );
+  }
+
+  updateStorageWithNewContent() {
     if (!this.storageKey) return;
     const storageKey = this.storageKey;
 
@@ -509,13 +642,17 @@ export class GrEditableContent extends LitElement {
           patchNum: this.patchNum,
         })
       );
-
       return;
     }
+
     await this.loadEmails();
-    this.editing = true;
-    await this.updateComplete;
-    this.focusTextarea();
+
+    if (!this.isUploader) {
+      assertIsDefined(this.uploaderConfirmDialog, 'uploaderConfirmDialog');
+      this.uploaderConfirmDialog.showModal();
+    } else {
+      this.startEditing();
+    }
   }
 
   async loadEmails() {
@@ -548,7 +685,120 @@ export class GrEditableContent extends LitElement {
     });
   }
 
+  /**
+   * Called when the user clicks the "Format" button. Instead of setting
+   * `this.newContent` directly, we use `document.execCommand('insertText')`
+   * on the native <textarea> to push the change onto the native undo stack.
+   */
+  handleFormat(e: Event) {
+    e.preventDefault();
+
+    const textarea = this.textarea?.textarea;
+    if (!textarea) return;
+
+    // If we have lastFormattedContent, we're undoing
+    if (this.lastFormattedContent) {
+      textarea.focus();
+      textarea.setSelectionRange(0, textarea.value.length);
+      document.execCommand('insertText', false, this.lastFormattedContent);
+      this.newContent = this.lastFormattedContent;
+      this.lastFormattedContent = undefined;
+      return;
+    }
+
+    // Otherwise we're formatting
+    const oldValue = textarea.value;
+    const newValue = formatCommitMessageString(oldValue);
+    if (oldValue === newValue) return;
+
+    const {selectionStart, selectionEnd} = textarea;
+
+    textarea.focus();
+    textarea.setSelectionRange(0, oldValue.length);
+
+    this.lastFormattedContent = oldValue;
+    document.execCommand('insertText', false, newValue);
+    this.newContent = textarea.value;
+
+    // Restore the cursor position
+    const newSelectionStart = Math.min(selectionStart, newValue.length);
+    const newSelectionEnd = Math.min(selectionEnd, newValue.length);
+    textarea.setSelectionRange(newSelectionStart, newSelectionEnd);
+
+    this.updateFormatState(/* skipDebounce= */ true);
+  }
+
   private setCommitterEmail(e: CustomEvent<{value: string}>) {
     this.committerEmail = e.detail.value;
+  }
+
+  private computeFormatButtonTooltip(
+    formatDisabled: boolean,
+    formattedErrors: FormattingError[],
+    isUndo: boolean
+  ): string {
+    if (isUndo) {
+      return 'Undo formatting changes';
+    }
+    if (!formatDisabled) {
+      return (
+        'Automatically fixes formatting by trimming trailing spaces, ' +
+        'wrapping paragraphs at 72 characters, and condensing blank lines. '
+      );
+    }
+    // If disabled but there are formatting errors, the button can't fix them all
+    if (formattedErrors.length > 0) {
+      return (
+        'Format button cannot fix all issues (like subject or footer length). ' +
+        'Some must be fixed manually.'
+      );
+    }
+    return 'No format changes needed.';
+  }
+
+  private getCurrentCursorLine(): number {
+    const textarea = this.textarea?.textarea;
+    if (!textarea) return -1;
+
+    // Calculate which line the cursor is on
+    const text = textarea.value;
+    const cursorPos = textarea.selectionStart;
+    const textBeforeCursor = text.substring(0, cursorPos);
+    const matched = textBeforeCursor.match(/\n/g);
+    if (!matched) return -1;
+    return matched.length;
+  }
+
+  private filterActiveLineErrors(errors: FormattingError[]): FormattingError[] {
+    const currentLine = this.getCurrentCursorLine();
+    return errors.filter(error => {
+      // Skip trailing space errors on the current line
+      if (
+        currentLine !== -1 &&
+        error.line === currentLine + 1 &&
+        error.type === ErrorType.TRAILING_SPACES
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  private handleUploaderConfirm() {
+    assertIsDefined(this.uploaderConfirmDialog, 'uploaderConfirmDialog');
+    this.uploaderConfirmDialog.close();
+    this.startEditing();
+  }
+
+  private handleUploaderCancel() {
+    assertIsDefined(this.uploaderConfirmDialog, 'uploaderConfirmDialog');
+    this.uploaderConfirmDialog.close();
+  }
+
+  private startEditing() {
+    this.editing = true;
+    this.updateComplete.then(() => {
+      this.focusTextarea();
+    });
   }
 }

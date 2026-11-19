@@ -43,6 +43,7 @@ import com.google.gerrit.server.account.GroupIncludeCacheImpl;
 import com.google.gerrit.server.account.Realm;
 import com.google.gerrit.server.account.ServiceUserClassifierImpl;
 import com.google.gerrit.server.cache.CacheRemovalListener;
+import com.google.gerrit.server.cache.h2.CacheOptions;
 import com.google.gerrit.server.cache.h2.H2CacheModule;
 import com.google.gerrit.server.cache.mem.DefaultMemoryCacheModule;
 import com.google.gerrit.server.change.ChangeJson;
@@ -93,6 +94,7 @@ import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.project.SubmitRequirementsEvaluatorImpl;
 import com.google.gerrit.server.project.SubmitRuleEvaluator;
 import com.google.gerrit.server.query.approval.ApprovalModule;
+import com.google.gerrit.server.query.approval.ApprovalQueryBuilder;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeIsVisibleToPredicate;
 import com.google.gerrit.server.query.change.ChangeQueryBuilder;
@@ -121,9 +123,11 @@ import org.eclipse.jgit.lib.Config;
 /** Module for programs that perform batch operations on a site. */
 public class BatchProgramModule extends FactoryModule {
   private final Injector parentInjector;
+  private final ImmutableSet<CacheOptions> cacheOptions;
 
-  public BatchProgramModule(Injector parentInjector) {
+  public BatchProgramModule(Injector parentInjector, ImmutableSet<CacheOptions> cacheOptions) {
     this.parentInjector = parentInjector;
+    this.cacheOptions = cacheOptions;
   }
 
   @SuppressWarnings("rawtypes")
@@ -199,7 +203,7 @@ public class BatchProgramModule extends FactoryModule {
         new ChangesByProjectCache.Module(ChangesByProjectCache.UseIndex.FALSE, getConfig()));
     modules.add(new DefaultPermissionBackendModule());
     modules.add(new DefaultMemoryCacheModule());
-    modules.add(new H2CacheModule());
+    modules.add(new H2CacheModule(cacheOptions));
     modules.add(new GroupModule());
     modules.add(new NoteDbModule());
     modules.add(AccountCacheImpl.module());
@@ -228,6 +232,7 @@ public class BatchProgramModule extends FactoryModule {
     DynamicMap.mapOf(binder(), ChangeQueryBuilder.ChangeOperatorFactory.class);
     DynamicMap.mapOf(binder(), ChangeQueryBuilder.ChangeHasOperandFactory.class);
     DynamicMap.mapOf(binder(), ChangeQueryBuilder.ChangeIsOperandFactory.class);
+    DynamicMap.mapOf(binder(), ApprovalQueryBuilder.UserInOperandFactory.class);
 
     // Submit rules
     DynamicSet.setOf(binder(), SubmitRule.class);

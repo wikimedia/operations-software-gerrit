@@ -44,6 +44,20 @@ the class path.
 +
 Default is to create H2 database in the db folder of the site path.
 +
+To configure an H2 database explicitly, use the `async:` file system:
++
+----
+[accountPatchReviewDb]
+  url = jdbc:h2:async:/path/to/db
+----
++
+For legacy configurations, Gerrit also accepts the previous
+`jdbc:h2:file:/path/to/db` form as an alias for `jdbc:h2:async:/path/to/db`.
+H2 documents the `async:` file system as a workaround for applications that
+may interrupt embedded H2 operations, but not as a complete safety guarantee.
+Use a client/server database for the strongest isolation from interrupted
+request threads.
++
 Changing this parameter requires to migrate database using the
 link:pgm-MigrateAccountPatchReviewDb.html[MigrateAccountPatchReviewDb] program.
 Migration cannot be done while the server is running.
@@ -103,6 +117,27 @@ Default is `30 seconds`.
 
 [[accounts]]
 === Section accounts
+
+[[accounts.enableDelete]]accounts.enableDelete::
++
+Controls whether to activate the delete accounts functionality.
+If `true`, then users with permission can delete accounts via the web UI or via the
+link:rest-api-accounts.html#delete-account][REST].
++
+By default, `true`.
+
+[[accounts.caseInsensitiveLocalPart]]accounts.caseInsensitiveLocalPart::
++
+When querying by email, the case sensitivity of the email local part depends on the domains
+specified in the this list.
++
+Users can register emails with mixed case, and if the email’s domain matches one in the configured
+list, the local part is treated as case-insensitive.
+This ensures that emails with different cases, such as User@mail.com and user@mail.com, are
+associated with the same user.
+For domains not listed in the configuration, email matching remains case-sensitive.
++
+Default is unset.
 
 [[accounts.visibility]]accounts.visibility::
 +
@@ -405,6 +440,26 @@ The "Sign In" link will send users directly to this URL.
 +
 HTTP header to trust the username from, or unset to select HTTP basic
 authentication.  Only used if `auth.type` is set to `HTTP`.
+
+[[auth.httpTrustedProxyNetworks]]auth.httpTrustedProxyNetworks::
++
+List of IPv4 networks CIDRs (e.g., `192.168.0.0/16`) that are trusted proxies for receiving
+HTTP header authentication.  Specify multiple networks by adding multiple entries.
+It applies only when `auth.type` is set to `HTTP` or `HTTP_LDAP`. The trusted-proxy
+remote address must be IPv4; if Gerrit is reached over IPv6, header-based
+authentication is rejected.
++
+[NOTE]
+====
+Accepting a trusted authentication HTTP header involves a leap of faith in the security
+of the incoming HTTP traffic. By default, the only secure way to ensure that all the
+traffic is coming from a trusted authentication proxy is via firewall rules or using
+a local proxy on the loopback interface. When using a remote proxy, the security of
+the connection between the proxy and Gerrit is in doubt, and this can be mitigated by
+the use of `auth.httpTrustedProxyNetworks`.
+====
++
+Default: accept any incoming IPs.
 
 [[auth.httpDisplaynameHeader]]auth.httpDisplaynameHeader::
 +
@@ -835,6 +890,28 @@ for detail.
 +
 Default is `false`.
 
+[[cache.h2MaxInvalidated]]cache.h2MaxInvalidated::
++
+The amount of cache invalidations required to cause the Gerrit bloom
+filters for H2 caches to be invalidated. This amount is expressed as
+a percentage of the cache's estimatedSize (which is derived from the
+number of entries on disk on startup). This number takes no units.
++
+Some caches of Gerrit are persistent and are backed by an H2 database.
+Gerrit uses a bloom filter to avoid querying the H2 DB when the filter
+indicates that the entry cannot be on disk. As cache entries are
+invalidated, this filter will become less effective, and will result
+in queries to the H2 DB which could have been avoided had the filter
+been more effective. The only way to improve the effectiveness of the
+filter is to rebuild it once it is no longer effective. A rebuild
+will iterate over all the entries from the DB and create a new
+bloom filter for them.
++
+Default is 25 (percent of the estimatedSize).
++
+Valid values are 0, and positive integers. Setting this to 0 will
+cause the filter to never be rebuilt.
++
 [[cache.openFiles]]cache.openFiles::
 +
 The number of file descriptors to add to the limit set by the Gerrit daemon.
@@ -1641,9 +1718,9 @@ By default `true`.
 [[change.enableRobotComments]]change.enableRobotComments::
 +
 Are robot comments enabled in the Gerrit UI? This setting allows phasing out
-robot comments.
+robot comments. Soon robot comments will be entirely removed.
 +
-By default `true`.
+By default `false`.
 
 [[change.propagateSubmitRequirementErrors]]change.propagateSubmitRequirementErrors::
 +
@@ -1817,17 +1894,24 @@ Default is `false`.
 
 This section allows to configure change cleanups and schedules them to
 run periodically.
++
+Cleanup only runs if link:#changeCleanup.startTime[startTime]
+and link:#changeCleanup.interval[interval] are configured and at least one of
+link:#changeCleanup.abandonAfter[abandonAfter] or
+link:#changeCleanup.query[query] is set.
++
+[WARNING] Auto-Abandoning changes may confuse/annoy users. When
+enabling this, make sure to choose a reasonably large grace period and
+inform users in advance.
 
 [[changeCleanup.abandonAfter]]changeCleanup.abandonAfter::
 +
 Period of inactivity after which open changes should be abandoned
 automatically.
 +
-By default `0`, never abandon open changes.
-+
-[WARNING] Auto-Abandoning changes may confuse/annoy users. When
-enabling this, make sure to choose a reasonably large grace period and
-inform users in advance.
+By default `0`, meaning no age constraint is applied. An age constraint can
+alternatively be expressed via link:#changeCleanup.query[changeCleanup.query]
+(e.g. `age:4w`).
 +
 The following suffixes are supported to define the time unit:
 +
@@ -1866,6 +1950,30 @@ By default "Auto-Abandoned due to inactivity, see
 ${URL}Documentation/user-change-cleanup.html#auto-abandon\n\n
 If this change is still wanted it should be restored.".
 
+[[changeCleanup.query]]changeCleanup.query::
++
+Additional query predicates appended to the query used for selecting changes to
+auto-abandon. The configured query is combined with the built-in predicates
+that always restrict cleanup to open changes (`status:new`) and may additionally
+include predicates derived from other cleanup options such as
+link:#changeCleanup.abandonAfter[abandonAfter] and
+link:#changeCleanup.abandonIfMergeable[abandonIfMergeable].
+
+Any valid link:user-search.html[change search] expression is accepted. This
+allows limiting the batch size, excluding specific changes, or combining both:
++
+----
+  [changeCleanup]
+    query = age:4w limit:100 -project:some/repo -hashtag:keep-alive
+----
++
+Setting this option enables cleanup even if
+link:#changeCleanup.abandonAfter[changeCleanup.abandonAfter] is not set. In
+that case the query is solely responsible for determining which changes are
+abandoned, so it should include an appropriate age constraint, e.g. `age:4w`.
++
+By default unset, meaning no extra constraints are applied.
+
 [[changeCleanup.startTime]]changeCleanup.startTime::
 +
 The link:#schedule-configuration-startTime[start time] for running
@@ -1875,6 +1983,20 @@ change cleanups.
 +
 The link:#schedule-configuration-interval[interval] for running
 change cleanups.
+
+link:#schedule-configuration-examples[Schedule examples] can be found
+in the link:#schedule-configuration[Schedule Configuration] section.
+
+[[draftCommentsCleanup]]
+[[draftCommentsCleanup.startTime]]draftCommentsCleanup.startTime::
++
+The link:#schedule-configuration-startTime[start time] for running
+drat comments cleanup.
+
+[[draftCommentsCleanup.interval]]draftCommentsCleanup.interval::
++
+The link:#schedule-configuration-interval[interval] for running
+draft comments cleanup.
 
 link:#schedule-configuration-examples[Schedule examples] can be found
 in the link:#schedule-configuration[Schedule Configuration] section.
@@ -2247,6 +2369,23 @@ blog,role=external,window=_blank], the recursive merge produces better results i
 that are merged have more than one common predecessor.
 +
 Default is `true`.
+
+[[core.useGitattributesForMerge]]core.useGitattributesForMerge::
++
+Use JGit's support for reading gitattributes files to control behavior during
+link:https://git-scm.com/docs/gitattributes.html#_performing_a_three_way_merge[
+three-way content merges,role=external,window=_blank]. This only affects
+projects that allow content merges.
++
+Enabling this support does add overhead to all content merge operations since
+the presence and content of in-tree `.gitattributes` files is always considered
+(even when the trees have no `.gitattributes` files or those files have no
+merge driver configuration). See the
+link:https://git-scm.com/docs/gitattributes.html[gitattributes man page] for
+more information on configuration and behavior. Also note that JGit only
+implements a subset of the documented configuration.
++
+Default is `false`.
 
 [[core.repositoryCacheCleanupDelay]]core.repositoryCacheCleanupDelay::
 +
@@ -2646,8 +2785,10 @@ Example:
 
 [[gerrit.listProjectsFromIndex]]gerrit.listProjectsFromIndex::
 +
-Enable rendering of project list from the secondary index instead
-of purely relying on the in-memory cache.
+Enable rendering of project list from the secondary index when the project
+filter is empty, instead of purely relying on the in-memory cache.
+When listing the projects with a filter, the list is always rendered
+from the project in-memory cache.
 +
 By default `false`.
 +
@@ -2661,7 +2802,7 @@ the **list is limited** by the global capability
 link:access-control.html#capability_queryLimit[queryLimit]
 which is defaulted to 500 entries.
 
-[[gerrit.projectStatePredicateEnabled]]
+[[gerrit.projectStatePredicateEnabled]]gerrit.projectStatePredicateEnabled::
 +
 Indicates whether the link:rest-api-projects.html[/projects/] REST API endpoint
 supports filtering projects by state. The value is exposed in
@@ -2774,7 +2915,7 @@ Allow Gerrit to start even if the underlying schema version has been bumped to
 the next Gerrit version.
 +
 Set to `true` if Gerrit is installed in
-[high-availability configuration](https://gerrit.googlesource.com/plugins/high-availability/+/refs/heads/master/README.md)
+link:https://gerrit.googlesource.com/plugins/high-availability/+/refs/heads/master/README.md[high-availability configuration]
 during the rolling upgrade to the next version.
 +
 By default `false`.
@@ -2991,6 +3132,15 @@ usually the commit shouldn't be ignored.
 By default, `false`.
 +
 Setting it to `true` may lead to some unexpected results in audit log and must be set carefully.
+
+[[groups.enableDeleteGroup]]groups.enableDeleteGroup::
++
+Controls whether to activate the delete groups functionality.
+If `true`, then users with permission can delete groups.
+This setting provides administrators the ability to activate or to deactivate delete groups functionality.
++
+By default, `false`.
++
 
 [[groups.includeExternalUsersInRegisteredUsersGroup]]groups.includeExternalUsersInRegisteredUsersGroup::
 +
@@ -3753,6 +3903,36 @@ immediately available after the write request.
 +
 Defaults to `false`.
 
+[[label]]
+=== Section label
+
+[[label.name.labelCopyEnforcement]]label.<name>.labelCopyEnforcement::
++
+The votes that satisfy this condition are copied regardless of label's
+link:config-labels.html#label_copyCondition[copyCondition].
++
+Uses the same syntax as label's
+link:config-labels.html#label_copyCondition[copyCondition]
++
+The final copyCondition is equivalent to
+----
+(<labelCondition> AND NOT <copyRestriction>) OR <copyEnforcement>
+----
+
+[[label.name.labelCopyRestriction]]label.<name>.labelCopyRestriction::
++
+The votes that satisfy this condition are not copied regardless of label's
+link:config-labels.html#label_copyCondition[copyCondition] unless they also
+satisfy "change.codeReviewLabelCopyEnforcement".
++
+Uses the same syntax as label's
+link:config-labels.html#label_copyCondition[copyCondition]
++
+The final copyCondition is equivalent to
+----
+(<labelCondition> AND NOT <copyRestriction>) OR <copyEnforcement>
+----
+
 [[scheduledIndexer]]
 === Section scheduledIndexer
 
@@ -4149,9 +4329,19 @@ If `auth.type` is `LDAP` this setting should use `ldaps://` to
 ensure the end user's plaintext password is transmitted only over
 an encrypted connection.
 +
-If you want to configure multiple ldap servers you can try to put
-multiple ldap urls separated by a space:
+**Note**: Gerrit relies on the JNDI implementation provided by the underlying
+JDK for LDAP connectivity.
++
+Most OpenJDK-based JDK distributions support specifying multiple LDAP servers
+as space-separated URLs.
++
+To configure multiple LDAP servers, use the following syntax:
++
 `server = ldaps://ldap1 ldaps://ldap2`
++
+However, different JDK distributions may implement this behavior differently.
+If you are using a non-OpenJDK-based JDK, refer to its documentation to confirm
+how multiple LDAP URLs are handled.
 See https://issues.gerritcodereview.com/issues/40010644[issue 40010644].
 
 [[ldap.startTls]]ldap.startTls::
@@ -4881,6 +5071,28 @@ fails to start if any configured name cannot be resolved to a group.
 This section is used to configure behavior of the 'receive-pack'
 handler, which responds to 'git push' requests.
 
+[[receive.advertiseOpenChangesRefs]]receive.advertiseOpenChangesRefs::
++
+Ref advertisement for Git pushes still works in a "the server speaks
+first fashion", as Git Protocol V2 only addressed fetches. Therefore, the
+server needs to send all available references. For large repositories, this
+data can amount to tens of megabytes. To reduce this footprint, all references
+in `refs/changes/*` are removed. However, this removal can increase the number
+of unnecessary objects that clients send back to the server, because the common
+ancestor found during negotiation might be further back in history.
++
+To mitigate this, the server advertises to the user, the most recent
+`receive.advertiseOpenChangesRefs` open changes refs as additional "haves".
+This is a heuristic approach aimed at reducing the number of unnecessary
+objects that the client sends to the server. It is likely that the user has one
+of these changes in their local repository, which can serve as a starting point
+to determine the common ancestor shared by the client and server.
++
+If `receive.advertiseOpenChangesRefs` is set to `0`, no `refs/changes/*` will
+be advertised to the client.
++
+Defaults to 32.
+
 [[receive.allowGroup]]receive.allowGroup::
 +
 Name of the groups of users that are allowed to execute
@@ -5237,7 +5449,18 @@ If `true`, Gerrit will load and execute 'rules.pl' files in each
 project's refs/meta/config branch, if present. When set to `false`,
 only the default internal rules will be used.
 +
-Default is `true`, to execute project specific rules.
+Default is `false`, highlighting how prolog rules are now deprecated.
+
+[[rules.allowNewRules]]rules.allowNewRules::
++
+If `false`, Gerrit will not allow new rules to be uploaded to the
+server. This is useful to deprecate prolog rules and enforce that
+submit requirements are being used instead.
++
+Modification and deletion of existing rules are still allowed.
++
+Default is `true`, to allow creation of prolog rules in projects
+not having any already.
 
 [[rules.reductionLimit]]rules.reductionLimit::
 +
@@ -5748,6 +5971,14 @@ of them.
 By default uses the value of `sshd.listenAddress`.
 --
 
+[[sshd.generateHostKeys]]sshd.generateHostKeys::
++
+Whether link:pgm-init.html[init] generates missing SSH host keys in
+`'$site_path'/etc`. Set to `false` if host keys are provisioned
+externally, so that only those keys are offered to clients.
++
+By default, `true`.
+
 [[sshd.tcpKeepAlive]]sshd.tcpKeepAlive::
 +
 If `true`, enables TCP keepalive messages to the other side, so
@@ -5850,9 +6081,8 @@ By default, 0.
 
 [[sshd.waitTimeout]]sshd.waitTimeout::
 +
-Time in seconds after which the server automatically terminates
-connections waiting for a server operation to complete, like for instance
-cloning a very large repo with lots of refs.
+Maximum time the server will wait for available space in
+the output stream's buffer when writing data.
 Values should use common unit suffixes to express their setting:
 +
 * s, sec, second, seconds
@@ -6658,15 +6888,15 @@ configuration.
 When using a shared filesystem, such as NFS, the JGit settings need
 to be adjusted for being tolerant to the filesystem attributes caching.
 The example below shows a typical setting with an NFS v4 mount
-with default caching settings.
+with default caching settings. For details see the JGit documentation
+for the
+link:https://github.com/eclipse-jgit/jgit/blob/master/Documentation/config-options.md[core.trustXXX options,role=external,window=_blank].
 
 Sample `etc/jgit.config` file:
 ----
 [core]
     supportsAtomicFileCreation = false
-    trustFolderStat = false
-    trustLooseRefStat = after_open
-    trustPackedRefsStat = after_open
+    trustStat = after_open
 ----
 
 [[jgit-gc]]

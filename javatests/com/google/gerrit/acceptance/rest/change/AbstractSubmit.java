@@ -96,6 +96,7 @@ import com.google.gerrit.server.change.TestSubmitInput;
 import com.google.gerrit.server.git.validators.OnSubmitValidationListener;
 import com.google.gerrit.server.index.change.ChangeIndexer;
 import com.google.gerrit.server.notedb.ChangeNotes;
+import com.google.gerrit.server.project.testing.TestLabels;
 import com.google.gerrit.server.restapi.change.Submit;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
@@ -626,6 +627,20 @@ public abstract class AbstractSubmit extends AbstractDaemonTest {
         .add(block(Permission.READ).ref("refs/heads/hidden").group(REGISTERED_USERS))
         .update();
 
+    // Add permissions to apply label "Code-Review": 2 and submit
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            allowLabel(TestLabels.codeReview().getName())
+                .ref("refs/heads/master")
+                .group(REGISTERED_USERS)
+                .range(-2, 2))
+        .add(allow(Permission.SUBMIT).ref("refs/heads/master").group(REGISTERED_USERS))
+        .update();
+
+    // Use a non-admin user, since admins can always see all changes.
+    requestScopeOperations.setApiUser(user.id());
     submit(
         visible.getChangeId(),
         new SubmitInput(),
@@ -1022,6 +1037,7 @@ public abstract class AbstractSubmit extends AbstractDaemonTest {
   }
 
   @Test
+  @GerritConfig(name = "retry.timeout", value = "1s")
   public void submitChangeMissingInIndexComputeMergeSupersetRetried() throws Throwable {
     // Cherry-pick strategy does not query from index
     assume().that(getSubmitType()).isNotEqualTo(CHERRY_PICK);
@@ -1499,7 +1515,7 @@ public abstract class AbstractSubmit extends AbstractDaemonTest {
   protected void assertPersonEquals(PersonIdent expected, PersonIdent actual) {
     assertThat(actual.getEmailAddress()).isEqualTo(expected.getEmailAddress());
     assertThat(actual.getName()).isEqualTo(expected.getName());
-    assertThat(actual.getTimeZone()).isEqualTo(expected.getTimeZone());
+    assertThat(actual.getZoneId()).isEqualTo(expected.getZoneId());
   }
 
   protected void assertAuthorAndCommitDateEquals(RevCommit commit) {

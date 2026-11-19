@@ -20,6 +20,8 @@ import {Comment, PatchSetNumber} from '../../../types/common';
 import {commentModelToken} from '../gr-comment-model/gr-comment-model';
 import {createUserFixSuggestion} from '../../../utils/comment-util';
 import {ChangeStatus} from '../../../api/rest-api';
+import {userModelToken} from '../../../models/user/user-model';
+import {SpecialFilePath} from '../../../constants/constants';
 
 declare global {
   interface HTMLElementEventMap {
@@ -52,11 +54,17 @@ export class GrUserSuggestionsFix extends LitElement {
 
   @state() isChangeMerged = false;
 
+  @state() isChangeAbandoned = false;
+
+  @state() loggedIn = false;
+
   private readonly getConfigModel = resolve(this, configModelToken);
 
   private readonly getChangeModel = resolve(this, changeModelToken);
 
   private readonly getCommentModel = resolve(this, commentModelToken);
+
+  private readonly getUserModel = resolve(this, userModelToken);
 
   constructor() {
     super();
@@ -84,6 +92,16 @@ export class GrUserSuggestionsFix extends LitElement {
       this,
       () => this.getChangeModel().status$,
       status => (this.isChangeMerged = status === ChangeStatus.MERGED)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().status$,
+      status => (this.isChangeAbandoned = status === ChangeStatus.ABANDONED)
+    );
+    subscribe(
+      this,
+      () => this.getUserModel().loggedIn$,
+      loggedIn => (this.loggedIn = loggedIn)
     );
   }
 
@@ -144,7 +162,7 @@ export class GrUserSuggestionsFix extends LitElement {
             class="action show-fix"
             @click=${this.handleShowFix}
           >
-            Show edit
+            Show Edit
           </gr-button>
           <gr-button
             secondary
@@ -155,7 +173,7 @@ export class GrUserSuggestionsFix extends LitElement {
             @click=${this.handleApplyFix}
             .title=${this.computeApplyEditTooltip()}
           >
-            Apply edit
+            Apply Edit
           </gr-button>
         </div>
       </div>
@@ -190,13 +208,27 @@ export class GrUserSuggestionsFix extends LitElement {
   private isApplyEditDisabled() {
     if (this.comment?.patch_set === undefined) return true;
     if (this.isChangeMerged) return true;
+    if (this.isChangeAbandoned) return true;
+    if (!this.loggedIn) return true;
+    if (
+      this.comment?.path === SpecialFilePath.COMMIT_MESSAGE &&
+      this.comment?.patch_set !== this.latestPatchNum
+    )
+      return true;
     return !this.previewLoaded;
   }
 
   private computeApplyEditTooltip() {
     if (this.comment?.patch_set === undefined) return '';
     if (this.isChangeMerged) return 'Change is already merged';
+    if (this.isChangeAbandoned) return 'Change is abandoned';
     if (!this.previewLoaded) return 'Fix is still loading ...';
+    if (!this.loggedIn) return 'You must be logged in to apply a fix';
+    if (
+      this.comment?.path === SpecialFilePath.COMMIT_MESSAGE &&
+      this.comment?.patch_set !== this.latestPatchNum
+    )
+      return 'You cannot apply a commit message edit from a previous patch set';
     return '';
   }
 }

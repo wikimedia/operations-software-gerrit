@@ -74,6 +74,7 @@ import com.google.gerrit.server.util.SocketUtil;
 import com.google.gerrit.server.util.SystemLog;
 import com.google.gerrit.testing.FakeAccountPatchReviewStore.FakeAccountPatchReviewStoreModule;
 import com.google.gerrit.testing.FakeEmailSender.FakeEmailSenderModule;
+import com.google.gerrit.testing.GitRepositoryCountingManagerModule;
 import com.google.gerrit.testing.InMemoryRepositoryManager;
 import com.google.gerrit.testing.SshMode;
 import com.google.gerrit.testing.TestLoggingActivator;
@@ -304,14 +305,10 @@ public class GerritServer implements AutoCloseable {
     if (value.isEmpty()) {
       value = Strings.nullToEmpty(System.getProperty("gerrit.forceLocalDisk"));
     }
-    switch (value.trim().toLowerCase(Locale.US)) {
-      case "1":
-      case "yes":
-      case "true":
-        return true;
-      default:
-        return false;
-    }
+    return switch (value.trim().toLowerCase(Locale.US)) {
+      case "1", "yes", "true" -> true;
+      default -> false;
+    };
   }
 
   /**
@@ -562,6 +559,7 @@ public class GerritServer implements AutoCloseable {
         new GrantDirectPushPermissionsOnStartupModule(),
         new ReindexProjectsAtStartupModule(),
         new ReindexGroupsAtStartupModule());
+    daemon.addAdditionalDbModuleForTesting(new GitRepositoryCountingManagerModule());
     ExecutorService daemonService = Executors.newSingleThreadExecutor();
     String[] args =
         Stream.concat(

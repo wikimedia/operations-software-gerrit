@@ -20,6 +20,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
+import com.google.gerrit.acceptance.ExtensionRegistry;
+import com.google.gerrit.acceptance.ExtensionRegistry.Registration;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.testsuite.change.ChangeKindCreator;
 import com.google.gerrit.acceptance.testsuite.change.ChangeOperations;
@@ -27,11 +29,16 @@ import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.client.ChangeKind;
+import com.google.gerrit.index.query.Matchable;
+import com.google.gerrit.index.query.OperatorPredicate;
+import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
 import com.google.gerrit.server.change.ChangeKindCache;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.query.approval.ApprovalContext;
 import com.google.gerrit.server.query.approval.ApprovalQueryBuilder;
+import com.google.gerrit.server.query.approval.ApprovalQueryBuilder.UserInOperandFactory;
+import com.google.gerrit.server.query.approval.UserInPredicate;
 import com.google.gerrit.server.update.RepoView;
 import com.google.inject.Inject;
 import org.eclipse.jgit.lib.ObjectInserter;
@@ -46,6 +53,7 @@ public class ApprovalQueryIT extends AbstractDaemonTest {
   @Inject private ChangeNotes.Factory changeNotesFactory;
   @Inject private ChangeKindCache changeKindCache;
   @Inject private ChangeOperations changeOperations;
+  @Inject private ExtensionRegistry extensionRegistry;
 
   @Test
   public void magicValuePredicate() throws Exception {
@@ -64,6 +72,14 @@ public class ApprovalQueryIT extends AbstractDaemonTest {
     assertTrue(queryBuilder.parse("is:ANY").asMatchable().match(contextForCodeReviewLabel(-2)));
     assertTrue(queryBuilder.parse("is:ANY").asMatchable().match(contextForCodeReviewLabel(2)));
     assertTrue(queryBuilder.parse("is:aNy").asMatchable().match(contextForCodeReviewLabel(2)));
+
+    assertTrue(queryBuilder.parse("is:POSITIVE").asMatchable().match(contextForCodeReviewLabel(1)));
+    assertTrue(
+        queryBuilder.parse("is:negative").asMatchable().match(contextForCodeReviewLabel(-2)));
+    assertFalse(
+        queryBuilder.parse("is:positive").asMatchable().match(contextForCodeReviewLabel(-1)));
+    assertFalse(
+        queryBuilder.parse("is:NEGATIVE").asMatchable().match(contextForCodeReviewLabel(2)));
   }
 
   @Test
@@ -85,8 +101,8 @@ public class ApprovalQueryIT extends AbstractDaemonTest {
     assertThat(thrown)
         .hasMessageThat()
         .contains(
-            "INVALID is not a valid value for operator 'is'. Valid values: ANY, MAX, MIN"
-                + " or integer");
+            "INVALID is not a valid value for operator 'is'. Valid values: ANY, MAX, MIN, NEGATIVE,"
+                + " POSITIVE or integer");
   }
 
   @Test
@@ -158,6 +174,14 @@ public class ApprovalQueryIT extends AbstractDaemonTest {
         .contains(
             "INVALID is not a valid value for operator 'changekind'. Valid values:"
                 + " MERGE_FIRST_PARENT_UPDATE, NO_CHANGE, NO_CODE_CHANGE, REWORK, TRIVIAL_REBASE");
+  }
+
+  @Test
+  public void changeIsPredicates_matches() throws Exception {
+    ApprovalContext context = contextForCodeReviewLabel(2);
+
+    assertTrue(queryBuilder.parse("changeis:open").asMatchable().match(context));
+    assertFalse(queryBuilder.parse("changeis:wip").asMatchable().match(context));
   }
 
   @Test
@@ -286,6 +310,49 @@ public class ApprovalQueryIT extends AbstractDaemonTest {
     assertThat(thrown).hasMessageThat().contains("Unsupported query: INVALID");
   }
 
+  private static class CustomAlwaysTruePredicate extends OperatorPredicate<ApprovalContext>
+      implements UserInOperandFactory, Matchable<ApprovalContext> {
+
+    public static final String OPERAND = "true-predicate";
+
+    public CustomAlwaysTruePredicate() {
+      super("uploaderin", OPERAND);
+    }
+
+    @Override
+    public boolean match(ApprovalContext object) {
+      return true;
+    }
+
+    @Override
+    public int getCost() {
+      return 0;
+    }
+
+    @Override
+    public Predicate<ApprovalContext> create(UserInPredicate.Field field)
+        throws QueryParseException {
+      return this;
+    }
+  }
+
+  @Test
+  public void pluginUploaderInQuery() throws Exception {
+    try (Registration registration =
+        extensionRegistry
+            .newRegistration()
+            .add(new CustomAlwaysTruePredicate(), CustomAlwaysTruePredicate.OPERAND)) {
+      assertTrue(
+          queryBuilder
+              .parse(
+                  String.format(
+                      "uploaderin:%s_%s",
+                      CustomAlwaysTruePredicate.OPERAND, ExtensionRegistry.PLUGIN_NAME))
+              .asMatchable()
+              .match(contextForCodeReviewLabel(2)));
+    }
+  }
+
   private ApprovalContext contextForCodeReviewLabel(int value) throws Exception {
     PushOneCommit.Result result = createChange();
     amendChange(result.getChangeId());
@@ -303,9 +370,10 @@ public class ApprovalQueryIT extends AbstractDaemonTest {
     try (Repository repo = repoManager.openRepository(project);
         ObjectInserter ins = repo.newObjectInserter();
         ObjectReader reader = ins.newReader();
-        RevWalk rw = new RevWalk(reader)) {
+        RevWalk rw = new RevWalk(reader);
+        RepoView repoView = new RepoView(repo, rw, ins)) {
       return ApprovalContext.create(
-          changeNotes,
+          changeDataFactory.create(changeNotes),
           psId,
           approver,
           projectCache.get(project).get().getLabelTypes().byLabel("Code-Review").get(),
@@ -313,7 +381,7 @@ public class ApprovalQueryIT extends AbstractDaemonTest {
           changeNotes.getPatchSets().get(newPsId),
           changeKind,
           /* isMerge= */ false,
-          new RepoView(repo, rw, ins));
+          repoView);
     }
   }
 }

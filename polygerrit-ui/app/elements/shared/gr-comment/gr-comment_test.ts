@@ -394,7 +394,7 @@ suite('gr-comment tests', () => {
                   title="This button copies the text to make a suggestion"
                 >
                   <gr-icon filled="" icon="edit" id="icon"> </gr-icon>
-                  Suggest edit
+                  Suggest Edit
                 </gr-button>
                 <span class="patchset-text">Patchset 1</span>
                 <span class="separator"></span>
@@ -970,7 +970,7 @@ suite('gr-comment tests', () => {
           tabindex="0"
           title="This button copies the text to make a suggestion"
         >
-          <gr-icon icon="edit" id="icon" filled></gr-icon> Suggest edit
+          <gr-icon icon="edit" id="icon" filled></gr-icon> Suggest Edit
         </gr-button> `
       );
     });
@@ -1155,7 +1155,14 @@ suite('gr-comment tests', () => {
         suggestionDiffPreview.previewed = true;
         suggestionDiffPreview.previewLoadedFor = generatedFixSuggestion;
         await element.updateComplete;
-        await element.waitPreviewForGeneratedSuggestion();
+        // trigger event preview-loaded on suggestionDiffPreview with detail
+        suggestionDiffPreview.dispatchEvent(
+          new CustomEvent('preview-loaded', {
+            bubbles: true,
+            detail: {previewLoadedFor: generatedFixSuggestion},
+          })
+        );
+        // await element.waitPreviewForGeneratedSuggestion();
         await element.updateComplete;
         element.save();
         await element.updateComplete;

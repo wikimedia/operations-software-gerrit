@@ -65,8 +65,7 @@ const EXPECTED_QUERY_OPTIONS = listChangesOptionsToHex(
   // They are not used in bulk actions.
   // ListChangesOption.CURRENT_ACTIONS,
   ListChangesOption.CURRENT_REVISION,
-  ListChangesOption.DETAILED_LABELS,
-  ListChangesOption.SUBMIT_REQUIREMENTS
+  ListChangesOption.DETAILED_LABELS
 );
 
 suite('gr-rest-api-service-impl tests', () => {
@@ -540,7 +539,6 @@ suite('gr-rest-api-service-impl tests', () => {
     assert.equal(obj.hide_top_menu, false);
     assert.equal(obj.indent_unit, 2);
     assert.equal(obj.indent_with_tabs, false);
-    assert.equal(obj.key_map_type, 'DEFAULT');
     assert.equal(obj.line_length, 100);
     assert.equal(obj.line_wrapping, false);
     assert.equal(obj.match_brackets, true);
@@ -549,7 +547,6 @@ suite('gr-rest-api-service-impl tests', () => {
     assert.equal(obj.show_whitespace_errors, true);
     assert.equal(obj.syntax_highlighting, true);
     assert.equal(obj.tab_size, 8);
-    assert.equal(obj.theme, 'DEFAULT');
   });
 
   test('saveEditPreferences set show_tabs to false', () => {
@@ -1504,6 +1501,57 @@ suite('gr-rest-api-service-impl tests', () => {
     });
   });
 
+  suite('getChange', () => {
+    const changeNum = 555 as NumericChangeId;
+    const repo = 'test-repo' as RepoName;
+
+    test('getChange with known project', async () => {
+      element._projectLookup[changeNum] = Promise.resolve(repo);
+      const promise = mockPromise<ParsedJSON>();
+      const stub = sinon
+        .stub(element._restApiHelper, 'fetchJSON')
+        .returns(promise);
+
+      const change = element.getChange(
+        changeNum,
+        undefined,
+        listChangesOptionsToHex(ListChangesOption.DETAILED_ACCOUNTS)
+      );
+      promise.resolve({...createChange()} as unknown as ParsedJSON);
+
+      await change;
+
+      assert.isTrue(stub.called);
+      assert.equal(stub.args[0][0].url, '/changes/test-repo~555');
+      assert.deepEqual(stub.args[0][0].params, {
+        O: listChangesOptionsToHex(ListChangesOption.DETAILED_ACCOUNTS),
+      });
+    });
+
+    test('getChange with unknown projecgt', async () => {
+      const promise = mockPromise<ParsedJSON>();
+      const stub = sinon
+        .stub(element._restApiHelper, 'fetchJSON')
+        .returns(promise);
+
+      const change = element.getChange(
+        changeNum,
+        undefined,
+        listChangesOptionsToHex(ListChangesOption.DETAILED_ACCOUNTS)
+      );
+      promise.resolve({...createChange()} as unknown as ParsedJSON);
+
+      await change;
+
+      assert.isTrue(stub.called);
+      assert.equal(stub.args[0][0].url, '/changes/');
+      assert.deepEqual(stub.args[0][0].params, {
+        O: listChangesOptionsToHex(ListChangesOption.DETAILED_ACCOUNTS),
+        q: 'change:555',
+      });
+    });
+  });
+
   suite('getChanges populates _projectLookup', () => {
     test('multiple queries', async () => {
       sinon.stub(element._restApiHelper, 'fetchJSON').resolves([
@@ -1559,6 +1607,30 @@ suite('gr-rest-api-service-impl tests', () => {
         return Promise.resolve([]);
       });
     await element.getDetailedChangesWithActions([c1._number, c2._number]);
+    assert.isTrue(getChangesStub.calledOnce);
+  });
+
+  test('getDetailedChangesWithActions with SUBMIT_REQUIREMENTS', async () => {
+    const expectedQueryOptions = listChangesOptionsToHex(
+      ListChangesOption.CHANGE_ACTIONS,
+      ListChangesOption.CURRENT_REVISION,
+      ListChangesOption.DETAILED_LABELS,
+      ListChangesOption.SUBMIT_REQUIREMENTS
+    );
+    const c1 = createChange();
+    c1._number = 1 as NumericChangeId;
+    const c2 = createChange();
+    c2._number = 2 as NumericChangeId;
+    const getChangesStub = sinon
+      .stub(element, 'getChanges')
+      .callsFake((changesPerPage, query, offset, options) => {
+        assert.isUndefined(changesPerPage);
+        assert.strictEqual(query, 'change:1 OR change:2');
+        assert.isUndefined(offset);
+        assert.strictEqual(options, expectedQueryOptions);
+        return Promise.resolve([]);
+      });
+    await element.getDetailedChangesWithActions([c1._number, c2._number], true);
     assert.isTrue(getChangesStub.calledOnce);
   });
 

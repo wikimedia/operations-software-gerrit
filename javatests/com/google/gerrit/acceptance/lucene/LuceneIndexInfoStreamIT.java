@@ -18,14 +18,10 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.config.GerritConfig;
-import com.google.gerrit.server.config.SitePaths;
 import java.io.File;
-import javax.inject.Inject;
 import org.junit.Test;
 
 public class LuceneIndexInfoStreamIT extends AbstractDaemonTest {
-
-  @Inject private SitePaths sitePaths;
 
   @Test
   @GerritConfig(name = "index.changes_open.persistInfoStream", value = "true")

@@ -36,13 +36,13 @@ import {userModelToken} from '../../../models/user/user-model';
 import {modalStyles} from '../../../styles/gr-modal-styles';
 import {GrSyntaxLayerWorker} from '../../../embed/diff/gr-syntax-layer/gr-syntax-layer-worker';
 import {highlightServiceToken} from '../../../services/highlight/highlight-service';
-import {anyLineTooLong} from '../../../utils/diff-util';
-import {fireReload} from '../../../utils/event-util';
+import {fireError, fireReload} from '../../../utils/event-util';
 import {when} from 'lit/directives/when.js';
 import {Timing} from '../../../constants/reporting';
 import {changeModelToken} from '../../../models/change/change-model';
 import {getFileExtension} from '../../../utils/file-util';
 import {ChangeStatus} from '../../../api/rest-api';
+import {SpecialFilePath} from '../../../constants/constants';
 
 export interface DiffPreview {
   filepath: string;
@@ -95,10 +95,17 @@ export class GrApplyFixDialog extends LitElement {
   @state()
   loading = false;
 
+  @state()
+  hasEdit = false;
+
   @state() isChangeMerged = false;
+
+  @state() isChangeAbandoned = false;
 
   @state()
   onCloseFixPreviewCallbacks: ((fixapplied: boolean) => void)[] = [];
+
+  @state() loggedIn = false;
 
   private readonly restApiService = getAppContext().restApiService;
 
@@ -130,6 +137,13 @@ export class GrApplyFixDialog extends LitElement {
     );
     subscribe(
       this,
+      () => this.getUserModel().loggedIn$,
+      loggedIn => {
+        this.loggedIn = loggedIn;
+      }
+    );
+    subscribe(
+      this,
       () => this.getUserModel().diffPreferences$,
       diffPreferences => {
         if (!diffPreferences) return;
@@ -156,6 +170,19 @@ export class GrApplyFixDialog extends LitElement {
       this,
       () => this.getChangeModel().status$,
       status => (this.isChangeMerged = status === ChangeStatus.MERGED)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().status$,
+      status => (this.isChangeAbandoned = status === ChangeStatus.ABANDONED)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().revisions$,
+      revisions =>
+        (this.hasEdit = Object.values(revisions).some(
+          info => info._number === EDIT
+        ))
     );
   }
 
@@ -233,9 +260,7 @@ export class GrApplyFixDialog extends LitElement {
 
   private renderDiff(preview: DiffPreview) {
     const diff = preview.preview;
-    if (!anyLineTooLong(diff)) {
-      this.syntaxLayer.process(diff);
-    }
+    this.syntaxLayer.process(diff);
     return html`<gr-diff
       .prefs=${this.overridePartialDiffPrefs()}
       .path=${preview.filepath}
@@ -399,13 +424,27 @@ export class GrApplyFixDialog extends LitElement {
   private computeTooltip() {
     if (!this.change || !this.patchNum) return '';
     if (this.isChangeMerged) return 'Change is already merged';
+    if (this.isChangeAbandoned) return 'Change is abandoned';
     if (this.isApplyFixLoading) return 'Fix is still loading ...';
+    if (!this.loggedIn) return 'You must be logged in to apply a fix';
+    if (
+      this.currentPreviews[0]?.filepath === SpecialFilePath.COMMIT_MESSAGE &&
+      this.patchNum !== this.latestPatchNum
+    )
+      return 'You cannot apply a commit message edit from a previous patch set';
     return '';
   }
 
   private computeDisableApplyFixButton() {
     if (!this.change || !this.patchNum) return true;
     if (this.isChangeMerged) return true;
+    if (this.isChangeAbandoned) return true;
+    if (!this.loggedIn) return true;
+    if (
+      this.currentPreviews[0]?.filepath === SpecialFilePath.COMMIT_MESSAGE &&
+      this.patchNum !== this.latestPatchNum
+    )
+      return true;
     return this.isApplyFixLoading;
   }
 
@@ -419,20 +458,53 @@ export class GrApplyFixDialog extends LitElement {
     }
     this.isApplyFixLoading = true;
     this.reporting.time(Timing.APPLY_FIX_LOAD);
-    let res;
-    if (this.fixSuggestions?.[0].fix_id === PROVIDED_FIX_ID) {
-      res = await this.restApiService.applyFixSuggestion(
-        changeNum,
-        patchNum,
-        this.fixSuggestions[0].replacements,
-        this.latestPatchNum
-      );
+    let res: Response | undefined = undefined;
+    // Similar to gr-suggestion-diff-preview.ts:applyFix()
+    if (this.fixSuggestions?.[this.selectedFixIdx].fix_id === PROVIDED_FIX_ID) {
+      let errorText = '';
+      let status = '';
+      try {
+        res = await this.restApiService.applyFixSuggestion(
+          changeNum,
+          patchNum,
+          this.fixSuggestions[this.selectedFixIdx].replacements,
+          this.latestPatchNum
+        );
+      } catch (error) {
+        if (error instanceof Error) {
+          errorText = error.message;
+          status = errorText.match(/\b\d{3}\b/)?.[0] || '';
+        }
+        fireError(this, `Applying Fix failed.\n${errorText}`);
+      } finally {
+        this.reporting.timeEnd(Timing.APPLY_FIX_LOAD, {
+          method: 'apply-fix-dialog',
+          description: this.fixSuggestions?.[0].description,
+          fileExtension: getFileExtension(
+            this.fixSuggestions?.[0]?.replacements?.[0].path ?? ''
+          ),
+          success: res?.ok ?? false,
+          status: res?.status ?? status,
+          errorText,
+        });
+      }
+      // Robot Comments are deprecated
     } else {
       res = await this.restApiService.applyRobotFixSuggestion(
         changeNum,
         patchNum,
         this.currentFix.fix_id
       );
+      this.reporting.timeEnd(Timing.APPLY_FIX_LOAD, {
+        method: 'apply-fix-dialog',
+        description: this.fixSuggestions?.[0].description,
+        isRobotComment: true,
+        fileExtension: getFileExtension(
+          this.fixSuggestions?.[0].replacements?.[0].path ?? ''
+        ),
+        success: res.ok,
+        status: res.status,
+      });
     }
     if (res?.ok) {
       this.getNavigation().setUrl(
@@ -440,18 +512,12 @@ export class GrApplyFixDialog extends LitElement {
           change,
           patchNum: EDIT,
           basePatchNum: patchNum as BasePatchSetNum,
+          forceReload: !this.hasEdit,
         })
       );
       this.close(true);
     }
     this.isApplyFixLoading = false;
-    this.reporting.timeEnd(Timing.APPLY_FIX_LOAD, {
-      method: 'apply-fix-dialog',
-      description: this.fixSuggestions?.[0].description,
-      fileExtension: getFileExtension(
-        this.fixSuggestions?.[0].replacements?.[0].path ?? ''
-      ),
-    });
   }
 }
 

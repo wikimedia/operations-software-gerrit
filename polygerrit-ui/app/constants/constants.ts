@@ -7,7 +7,7 @@
 /**
  * Tab names for primary tabs on change view page.
  */
-import {DiffViewMode} from '../api/diff';
+import {CopyInfoEventDetail, TextRange, DiffViewMode} from '../api/diff';
 import {DiffPreferencesInfo} from '../types/diff';
 import {EditPreferencesInfo, PreferencesInfo} from '../types/common';
 import {
@@ -35,6 +35,7 @@ export {
   ChangeStatus,
   CommentSide,
   ConfigParameterInfoType,
+  type CopyInfoEventDetail,
   DefaultDisplayNameConfig,
   EditableAccountField,
   FileInfoStatus,
@@ -48,6 +49,7 @@ export {
   ReviewerState,
   RevisionKind,
   SubmitType,
+  type TextRange,
 };
 
 export enum AccountTag {
@@ -299,7 +301,6 @@ export function createDefaultEditPrefs(): EditPreferencesInfo {
     hide_top_menu: false,
     indent_unit: 2,
     indent_with_tabs: false,
-    key_map_type: 'DEFAULT',
     line_length: 100,
     line_wrapping: false,
     match_brackets: true,
@@ -308,7 +309,6 @@ export function createDefaultEditPrefs(): EditPreferencesInfo {
     show_whitespace_errors: true,
     syntax_highlighting: true,
     tab_size: 8,
-    theme: 'DEFAULT',
   };
 }
 

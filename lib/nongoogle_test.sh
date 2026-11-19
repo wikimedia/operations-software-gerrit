@@ -19,7 +19,6 @@ auto-value-annotations
 cglib-3_2
 commons-io
 dropwizard-core
-eddsa
 error-prone-annotations
 flogger
 flogger-google-extensions
@@ -31,6 +30,7 @@ guava-testlib
 guice-assistedinject
 guice-library
 guice-servlet
+h2
 hamcrest
 impl-log4j
 j2objc

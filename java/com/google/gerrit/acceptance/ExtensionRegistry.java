@@ -45,22 +45,26 @@ import com.google.gerrit.extensions.webui.FileWebLink;
 import com.google.gerrit.extensions.webui.PatchSetWebLink;
 import com.google.gerrit.extensions.webui.ResolveConflictsWebLink;
 import com.google.gerrit.server.ExceptionHook;
+import com.google.gerrit.server.PluginPushOption;
 import com.google.gerrit.server.ServerStateProvider;
+import com.google.gerrit.server.ValidationOptionsListener;
 import com.google.gerrit.server.account.AccountStateProvider;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.change.FilterIncludedIn;
 import com.google.gerrit.server.change.ReviewerSuggestion;
 import com.google.gerrit.server.config.ProjectConfigEntry;
 import com.google.gerrit.server.git.ChangeMessageModifier;
-import com.google.gerrit.server.git.receive.PluginPushOption;
+import com.google.gerrit.server.git.validators.CommitValidationInfoListener;
 import com.google.gerrit.server.git.validators.CommitValidationListener;
 import com.google.gerrit.server.git.validators.OnSubmitValidationListener;
 import com.google.gerrit.server.git.validators.RefOperationValidationListener;
 import com.google.gerrit.server.logging.PerformanceLogger;
+import com.google.gerrit.server.query.approval.ApprovalQueryBuilder.UserInOperandFactory;
 import com.google.gerrit.server.query.change.ChangeQueryBuilder.ChangeHasOperandFactory;
 import com.google.gerrit.server.query.change.ChangeQueryBuilder.ChangeIsOperandFactory;
 import com.google.gerrit.server.restapi.change.OnPostReview;
 import com.google.gerrit.server.rules.SubmitRule;
+import com.google.gerrit.server.update.RetryListener;
 import com.google.gerrit.server.validators.AccountActivationValidationListener;
 import com.google.gerrit.server.validators.ProjectCreationValidationListener;
 import com.google.inject.Inject;
@@ -113,9 +117,13 @@ public class ExtensionRegistry {
   private final DynamicSet<ServerStateProvider> serverStateProviders;
   private final DynamicSet<AccountStateProvider> accountStateProviders;
   private final DynamicSet<AttentionSetListener> attentionSetListeners;
+  private final DynamicSet<ValidationOptionsListener> validationOptionsListeners;
+  private final DynamicSet<CommitValidationInfoListener> commitValidationInfoListeners;
+  private final DynamicSet<RetryListener> retryListeners;
 
   private final DynamicMap<ChangeHasOperandFactory> hasOperands;
   private final DynamicMap<ChangeIsOperandFactory> isOperands;
+  private final DynamicMap<UserInOperandFactory> userInOperands;
   private final DynamicMap<ReviewerSuggestion> reviewerSuggestions;
 
   @Inject
@@ -160,9 +168,13 @@ public class ExtensionRegistry {
       DynamicSet<ReviewerDeletedListener> reviewerDeletedListeners,
       DynamicMap<ChangeHasOperandFactory> hasOperands,
       DynamicMap<ChangeIsOperandFactory> isOperands,
+      DynamicMap<UserInOperandFactory> userInOperands,
       DynamicSet<ServerStateProvider> serverStateProviders,
       DynamicSet<AccountStateProvider> accountStateProviders,
       DynamicSet<AttentionSetListener> attentionSetListeners,
+      DynamicSet<ValidationOptionsListener> validationOptionsListeners,
+      DynamicSet<CommitValidationInfoListener> commitValidationInfoListeners,
+      DynamicSet<RetryListener> retryListeners,
       DynamicMap<ReviewerSuggestion> reviewerSuggestions) {
     this.accountIndexedListeners = accountIndexedListeners;
     this.changeIndexedListeners = changeIndexedListeners;
@@ -204,9 +216,13 @@ public class ExtensionRegistry {
     this.reviewerDeletedListeners = reviewerDeletedListeners;
     this.hasOperands = hasOperands;
     this.isOperands = isOperands;
+    this.userInOperands = userInOperands;
     this.serverStateProviders = serverStateProviders;
     this.accountStateProviders = accountStateProviders;
     this.attentionSetListeners = attentionSetListeners;
+    this.validationOptionsListeners = validationOptionsListeners;
+    this.commitValidationInfoListeners = commitValidationInfoListeners;
+    this.retryListeners = retryListeners;
     this.reviewerSuggestions = reviewerSuggestions;
   }
 
@@ -281,6 +297,11 @@ public class ExtensionRegistry {
     @CanIgnoreReturnValue
     public Registration add(ChangeIsOperandFactory isOperand, String exportName) {
       return add(isOperands, isOperand, exportName);
+    }
+
+    @CanIgnoreReturnValue
+    public Registration add(UserInOperandFactory userInOperand, String exportName) {
+      return add(userInOperands, userInOperand, exportName);
     }
 
     @CanIgnoreReturnValue
@@ -402,6 +423,21 @@ public class ExtensionRegistry {
     @CanIgnoreReturnValue
     public Registration add(AttentionSetListener attentionSetListener) {
       return add(attentionSetListeners, attentionSetListener);
+    }
+
+    @CanIgnoreReturnValue
+    public Registration add(ValidationOptionsListener validationOptionsListener) {
+      return add(validationOptionsListeners, validationOptionsListener);
+    }
+
+    @CanIgnoreReturnValue
+    public Registration add(CommitValidationInfoListener commitValidationInfoListener) {
+      return add(commitValidationInfoListeners, commitValidationInfoListener);
+    }
+
+    @CanIgnoreReturnValue
+    public Registration add(RetryListener retryListener) {
+      return add(retryListeners, retryListener);
     }
 
     @CanIgnoreReturnValue

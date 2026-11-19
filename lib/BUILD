@@ -77,7 +77,7 @@ java_library(
     name = "jgit-servlet",
     data = ["//lib:LICENSE-jgit"],
     visibility = ["//visibility:public"],
-    exports = ["@jgit//org.eclipse.jgit.http.server:jgit-servlet"],
+    exports = ["@jgit//org.eclipse.jgit.http.server.ee8:jgit-servlet-ee8"],
     runtime_deps = [":jgit"],
 )
 
@@ -152,13 +152,6 @@ java_library(
         "//java/com/google/gerrit/server/cache/mem:__pkg__",
     ],
     exports = [":caffeine-guava-renamed"],
-)
-
-java_library(
-    name = "juniversalchardet",
-    data = ["//lib:LICENSE-MPL1.1"],
-    visibility = ["//visibility:public"],
-    exports = ["@juniversalchardet//jar"],
 )
 
 java_library(

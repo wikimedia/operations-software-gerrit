@@ -119,6 +119,7 @@ import {configModelToken} from '../../../models/config/config-model';
 import {readJSONResponsePayload} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
 import {commentsModelToken} from '../../../models/comments/comments-model';
 import {when} from 'lit/directives/when.js';
+import {ValidationOptionInfo} from '../../../api/rest-api';
 
 const ERR_BRANCH_EMPTY = 'The destination branch can’t be empty.';
 const ERR_COMMIT_EMPTY = 'The commit message can’t be empty.';
@@ -1359,6 +1360,13 @@ export class GrChangeActions
     );
   }
 
+  sendPublishEditEvent() {
+    if (!this.change) return;
+    const change = this.change as ChangeInfo;
+    const revision = this.getRevision(change, this.latestPatchNum);
+    this.getPluginLoader().jsApiService.handlePublishEdit(change, revision);
+  }
+
   // private but used in test
   getRevision(change: ChangeInfo, patchNum?: PatchSetNumber) {
     for (const rev of Object.values(change.revisions ?? {})) {
@@ -1369,29 +1377,28 @@ export class GrChangeActions
     return null;
   }
 
-  showRevertDialog() {
+  async showRevertDialog() {
     const change = this.change;
     if (!change) return;
     const query = `submissionid: "${change.submission_id}"`;
     /* A chromium plugin expects that the modifyRevertMsg hook will only
     be called after the revert button is pressed, hence we populate the
     revert dialog after revert button is pressed. */
-    this.restApiService.getChanges(0, query).then(changes => {
-      if (!changes) {
-        this.reporting.error(
-          'Change Actions',
-          new Error('getChanges returns undefined')
-        );
-        return;
-      }
-      assertIsDefined(this.confirmRevertDialog, 'confirmRevertDialog');
-      this.confirmRevertDialog.populate(
-        change,
-        this.commitMessage,
-        changes.length
-      );
-      this.showActionDialog(this.confirmRevertDialog);
-    });
+    const [changes, validationOptions] = await Promise.all([
+      this.restApiService.getChanges(0, query),
+      this.restApiService.getValidationOptions(this.change!._number),
+    ]);
+    if (!changes) {
+      return;
+    }
+    assertIsDefined(this.confirmRevertDialog, 'confirmRevertDialog');
+    this.confirmRevertDialog.populate(
+      change,
+      validationOptions,
+      this.commitMessage,
+      changes.length
+    );
+    this.showActionDialog(this.confirmRevertDialog);
   }
 
   showSubmitDialog() {
@@ -1529,7 +1536,7 @@ export class GrChangeActions
       case RevisionActions.REBASE:
         assertIsDefined(this.confirmRebase, 'confirmRebase');
         this.showActionDialog(this.confirmRebase);
-        this.confirmRebase.fetchRecentChanges();
+        this.confirmRebase.initiateFetchInfo();
         break;
       case RevisionActions.CHERRYPICK:
         this.handleCherrypickTap();
@@ -1587,6 +1594,9 @@ export class GrChangeActions
       allow_conflicts: e.detail.allowConflicts,
       on_behalf_of_uploader: e.detail.onBehalfOfUploader,
       committer_email: e.detail.committerEmail,
+      validation_options: this.computeValidationOptionsForPayload(
+        this.confirmRebase.getValidationOptions()
+      ),
     };
     const rebaseChain = !!e.detail.rebaseChain;
     this.fireAction(
@@ -1656,7 +1666,19 @@ export class GrChangeActions
     });
   }
 
-  private handleRevertDialogConfirm(e: CustomEvent<ConfirmRevertEventDetail>) {
+  private computeValidationOptionsForPayload(options: ValidationOptionInfo[]) {
+    // https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#change-input
+    // validation_options key defined as Map<string, string> here
+    // This only works for options that expect a boolean "true" in return
+    const validationOptionsMap: Record<string, string> = {};
+    for (const option of options) {
+      validationOptionsMap[option.name] = 'true';
+    }
+    return validationOptionsMap;
+  }
+
+  // private but visible for testing
+  handleRevertDialogConfirm(e: CustomEvent<ConfirmRevertEventDetail>) {
     assertIsDefined(this.confirmRevertDialog, 'confirmRevertDialog');
     assertIsDefined(this.actionsModal, 'actionsModal');
     const revertType = e.detail.revertType;
@@ -1670,7 +1692,12 @@ export class GrChangeActions
           '/revert',
           assertUIActionInfo(this.actions.revert),
           false,
-          {message}
+          {
+            message,
+            validation_options: this.computeValidationOptionsForPayload(
+              this.confirmRevertDialog.getValidationOptions()
+            ),
+          }
         );
         break;
       case RevertType.REVERT_SUBMISSION:
@@ -1680,7 +1707,12 @@ export class GrChangeActions
           '/revert_submission',
           {__key: 'revert_submission', method: HttpMethod.POST} as UIActionInfo,
           false,
-          {message}
+          {
+            message,
+            validation_options: this.computeValidationOptionsForPayload(
+              this.confirmRevertDialog.getValidationOptions()
+            ),
+          }
         );
         break;
       default:
@@ -1757,6 +1789,7 @@ export class GrChangeActions
       false,
       {notify: NotifyType.OWNER_REVIEWERS}
     );
+    this.sendPublishEditEvent();
   }
 
   // private but used in test

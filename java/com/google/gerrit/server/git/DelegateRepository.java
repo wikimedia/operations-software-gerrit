@@ -112,7 +112,7 @@ public class DelegateRepository extends Repository {
 
   @Override
   public ReflogReader getReflogReader(String refName) throws IOException {
-    return delegate.getReflogReader(refName);
+    return delegate.getRefDatabase().getReflogReader(refName);
   }
 
   @SuppressWarnings("rawtypes")
@@ -158,12 +158,6 @@ public class DelegateRepository extends Repository {
   @Override
   public FS getFS() {
     return delegate.getFS();
-  }
-
-  @Override
-  @Deprecated
-  public boolean hasObject(AnyObjectId objectId) {
-    return delegate.hasObject(objectId);
   }
 
   @Override
@@ -291,12 +285,6 @@ public class DelegateRepository extends Repository {
   @Override
   public String simplify(String revstr) throws AmbiguousObjectException, IOException {
     return delegate.simplify(revstr);
-  }
-
-  @Override
-  @Deprecated
-  public Ref peel(Ref ref) {
-    return delegate.peel(ref);
   }
 
   @Override

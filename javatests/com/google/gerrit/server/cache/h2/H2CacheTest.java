@@ -64,16 +64,17 @@ public class H2CacheTest {
       @Nullable Duration expireAfterWrite,
       @Nullable Duration refreshAfterWrite) {
     return new SqlStore<>(
-        "jdbc:h2:mem:Test_" + id,
+        "jdbc:h2:mem:Test_" + id + ";DB_CLOSE_DELAY=-1",
         KEY_TYPE,
         StringCacheSerializer.INSTANCE,
         StringCacheSerializer.INSTANCE,
         version,
         1 << 20,
+        25,
         expireAfterWrite,
         refreshAfterWrite,
         true,
-        false);
+        true);
   }
 
   @Test
@@ -187,23 +188,23 @@ public class H2CacheTest {
     assertThat(newImpl.diskStats().space()).isEqualTo(0);
     oldImpl.put("key", "val");
     assertThat(oldImpl.getIfPresent("key")).isEqualTo("val");
-    assertThat(oldImpl.diskStats().space()).isEqualTo(12);
+    assertThat(oldImpl.diskStats().space()).isEqualTo(6);
     assertThat(oldImpl.diskStats().hitCount()).isEqualTo(1);
 
     // Can't find key in cache with wrong version, but the data is still there.
     assertThat(newImpl.diskStats().requestCount()).isEqualTo(0);
-    assertThat(newImpl.diskStats().space()).isEqualTo(12);
+    assertThat(newImpl.diskStats().space()).isEqualTo(6);
     assertThat(newImpl.getIfPresent("key")).isNull();
-    assertThat(newImpl.diskStats().space()).isEqualTo(12);
+    assertThat(newImpl.diskStats().space()).isEqualTo(6);
 
     // Re-putting it via the new cache works, and uses the same amount of space.
     newImpl.put("key", "val2");
     assertThat(newImpl.getIfPresent("key")).isEqualTo("val2");
     assertThat(newImpl.diskStats().hitCount()).isEqualTo(1);
-    assertThat(newImpl.diskStats().space()).isEqualTo(14);
+    assertThat(newImpl.diskStats().space()).isEqualTo(7);
 
     // Now it's no longer in the old cache.
-    assertThat(oldImpl.diskStats().space()).isEqualTo(14);
+    assertThat(oldImpl.diskStats().space()).isEqualTo(7);
     assertThat(oldImpl.getIfPresent("key")).isNull();
   }
 

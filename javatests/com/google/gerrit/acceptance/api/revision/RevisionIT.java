@@ -20,11 +20,16 @@ import static com.google.gerrit.acceptance.PushOneCommit.FILE_NAME;
 import static com.google.gerrit.acceptance.PushOneCommit.PATCH;
 import static com.google.gerrit.acceptance.PushOneCommit.PATCH_FILE_ONLY;
 import static com.google.gerrit.acceptance.PushOneCommit.SUBJECT;
+import static com.google.gerrit.acceptance.TestExtensions.TestCommitValidationInfoListener;
+import static com.google.gerrit.acceptance.TestExtensions.TestCommitValidationListener;
+import static com.google.gerrit.acceptance.TestExtensions.TestValidationOptionsListener;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.entities.Patch.COMMIT_MSG;
 import static com.google.gerrit.entities.Patch.MERGE_LIST;
 import static com.google.gerrit.entities.Patch.PATCHSET_LEVEL;
 import static com.google.gerrit.extensions.client.ListChangesOption.ALL_REVISIONS;
+import static com.google.gerrit.extensions.client.ListChangesOption.CURRENT_COMMIT;
+import static com.google.gerrit.extensions.client.ListChangesOption.CURRENT_REVISION;
 import static com.google.gerrit.extensions.client.ListChangesOption.DETAILED_LABELS;
 import static com.google.gerrit.git.ObjectIds.abbreviateName;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
@@ -57,6 +62,7 @@ import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.BranchOrderSection;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.LabelId;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.Project;
@@ -100,10 +106,7 @@ import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
 import com.google.gerrit.extensions.webui.PatchSetWebLink;
 import com.google.gerrit.extensions.webui.ResolveConflictsWebLink;
-import com.google.gerrit.server.events.CommitReceivedEvent;
-import com.google.gerrit.server.git.validators.CommitValidationException;
-import com.google.gerrit.server.git.validators.CommitValidationListener;
-import com.google.gerrit.server.git.validators.CommitValidationMessage;
+import com.google.gerrit.server.git.validators.CommitValidationInfo;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.util.AccountTemplateUtil;
 import com.google.gerrit.testing.FakeEmailSender;
@@ -343,6 +346,16 @@ public class RevisionIT extends AbstractDaemonTest {
     assertThat(changeInfo.containsGitConflicts).isNull();
     assertThat(changeInfo.workInProgress).isNull();
     ChangeApi cherry = gApi.changes().id(changeInfo._number);
+
+    // Verify the conflicts information
+    RevCommit head = projectOperations.project(project).getHead(changeInfo.branch);
+    RevisionInfo currentRevision =
+        gApi.changes().id(changeInfo.id).get(CURRENT_REVISION, CURRENT_COMMIT).getCurrentRevision();
+    assertThat(currentRevision.commit.parents.get(0).commit).isEqualTo(head.name());
+    assertThat(currentRevision.conflicts).isNotNull();
+    assertThat(currentRevision.conflicts.containsConflicts).isFalse();
+    assertThat(currentRevision.conflicts.ours).isEqualTo(head.getName());
+    assertThat(currentRevision.conflicts.theirs).isEqualTo(r.getCommit().name());
 
     ChangeInfo cherryPickChangeInfoWithDetails = cherry.get();
     assertThat(cherryPickChangeInfoWithDetails.workInProgress).isNull();
@@ -745,6 +758,19 @@ public class RevisionIT extends AbstractDaemonTest {
     assertThat(cherryPickChange.containsGitConflicts).isTrue();
     assertThat(cherryPickChange.workInProgress).isTrue();
 
+    // Verify the conflicts information
+    RevCommit head = projectOperations.project(project).getHead(cherryPickChange.branch);
+    RevisionInfo currentRevision =
+        gApi.changes()
+            .id(cherryPickChange.id)
+            .get(CURRENT_REVISION, CURRENT_COMMIT)
+            .getCurrentRevision();
+    assertThat(currentRevision.commit.parents.get(0).commit).isEqualTo(head.name());
+    assertThat(currentRevision.conflicts).isNotNull();
+    assertThat(currentRevision.conflicts.containsConflicts).isTrue();
+    assertThat(currentRevision.conflicts.ours).isEqualTo(head.getName());
+    assertThat(currentRevision.conflicts.theirs).isEqualTo(r.getCommit().name());
+
     // Verify that subject and topic on the cherry-pick change have been correctly populated.
     assertThat(cherryPickChange.subject).contains(in.message);
     assertThat(cherryPickChange.topic).isEqualTo("someTopic-" + destBranch);
@@ -814,6 +840,16 @@ public class RevisionIT extends AbstractDaemonTest {
 
     assertThat(changeInfo.containsGitConflicts).isTrue();
     assertThat(changeInfo.workInProgress).isTrue();
+
+    // Verify the conflicts information
+    RevisionInfo currentRevision =
+        gApi.changes().id(changeInfo.id).get(CURRENT_REVISION, CURRENT_COMMIT).getCurrentRevision();
+    assertThat(currentRevision.commit.parents.get(0).commit)
+        .isEqualTo(existingChange.getCommit().name());
+    assertThat(currentRevision.conflicts).isNotNull();
+    assertThat(currentRevision.conflicts.containsConflicts).isTrue();
+    assertThat(currentRevision.conflicts.ours).isEqualTo(existingChange.getCommit().name());
+    assertThat(currentRevision.conflicts.theirs).isEqualTo(srcChange.getCommit().name());
   }
 
   @Test
@@ -828,11 +864,17 @@ public class RevisionIT extends AbstractDaemonTest {
     gApi.projects().name(project.get()).branch(in.destination).create(new BranchInput());
 
     TestCommitValidationListener testCommitValidationListener = new TestCommitValidationListener();
+    TestValidationOptionsListener testValidationOptionsListener =
+        new TestValidationOptionsListener();
     try (Registration registration =
-        extensionRegistry.newRegistration().add(testCommitValidationListener)) {
+        extensionRegistry
+            .newRegistration()
+            .add(testCommitValidationListener)
+            .add(testValidationOptionsListener)) {
       gApi.changes().id(r.getChangeId()).current().cherryPick(in);
       assertThat(testCommitValidationListener.receiveEvent.pushOptions)
           .containsExactly("key", "value");
+      assertThat(testValidationOptionsListener.validationOptions).containsExactly("key", "value");
     }
   }
 
@@ -871,6 +913,68 @@ public class RevisionIT extends AbstractDaemonTest {
     assertThat(cherry.get()._number).isEqualTo(info(t2)._number);
     assertThat(cherry.get().cherryPickOfChange).isEqualTo(orig.get()._number);
     assertThat(cherry.get().cherryPickOfPatchSet).isEqualTo(2);
+  }
+
+  @Test
+  public void commitValidationInfoListenerIsInvokedOnPatchSetCreation() throws Exception {
+    // Do a cherry-pick to an existing change to invoke PatchSetInserter to create a new patch set.
+
+    // Create a change on the master branch that we can cherry-pick
+    PushOneCommit.Result r =
+        pushFactory
+            .create(admin.newIdent(), testRepo, SUBJECT, FILE_NAME, "a")
+            .to("refs/for/master");
+    Change.Id origChangeId = r.getChange().getId();
+
+    // Create a branch foo to which we can cherry-pick.
+    BranchInput branchInput = new BranchInput();
+    branchInput.revision = r.getCommit().getParent(0).name();
+    gApi.projects().name(project.get()).branch("foo").create(branchInput);
+
+    // Create a change on branch foo that we will update by cherry pick.
+    pushFactory
+        .create(admin.newIdent(), testRepo, SUBJECT, FILE_NAME, "b", r.getChangeId())
+        .to("refs/for/foo")
+        .assertOkStatus();
+
+    // Cherry-pick the change from the master branch to the foo branch so that it updates the
+    // existing change on the foo branch.
+    TestCommitValidationInfoListener testCommitValidationInfoListener =
+        new TestCommitValidationInfoListener();
+    TestCommitValidationListener testCommitValidationListener = new TestCommitValidationListener();
+    try (Registration registration =
+        extensionRegistry
+            .newRegistration()
+            .add(testCommitValidationInfoListener)
+            .add(testCommitValidationListener)) {
+      CherryPickInput in = new CherryPickInput();
+      in.destination = "foo";
+      in.message = r.getCommit().getFullMessage();
+      in.validationOptions = ImmutableMap.of("key", "value");
+      ChangeApi cherry =
+          gApi.changes().id(project.get(), origChangeId.get()).current().cherryPick(in);
+      ChangeInfo changeInfo = cherry.get();
+      assertThat(changeInfo.currentRevisionNumber).isEqualTo(2);
+      assertThat(changeInfo.cherryPickOfChange).isEqualTo(origChangeId.get());
+      assertThat(changeInfo.cherryPickOfPatchSet).isEqualTo(1);
+
+      assertThat(testCommitValidationInfoListener.validationInfoByValidator)
+          .containsKey(TestCommitValidationListener.class.getName());
+      assertThat(
+              testCommitValidationInfoListener
+                  .validationInfoByValidator
+                  .get(TestCommitValidationListener.class.getName())
+                  .status())
+          .isEqualTo(CommitValidationInfo.Status.PASSED);
+      assertThat(testCommitValidationInfoListener.receiveEvent.commit.name())
+          .isEqualTo(changeInfo.currentRevision);
+      assertThat(testCommitValidationInfoListener.receiveEvent.pushOptions)
+          .containsExactly("key", "value");
+      assertThat(testCommitValidationInfoListener.patchSetId)
+          .isEqualTo(PatchSet.id(Change.id(changeInfo._number), changeInfo.currentRevisionNumber));
+      assertThat(testCommitValidationInfoListener.hasChangeModificationRefContext).isTrue();
+      assertThat(testCommitValidationInfoListener.hasDirectPushRefContext).isFalse();
+    }
   }
 
   @Test
@@ -1628,6 +1732,28 @@ public class RevisionIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void mergeableForMergedChange() throws Exception {
+    PushOneCommit.Result r = createChange();
+    merge(r);
+
+    MergeableInfo mergeableInfo = gApi.changes().id(r.getChangeId()).current().mergeable();
+    assertThat(mergeableInfo.mergeable).isTrue();
+    assertThat(mergeableInfo.commitMerged).isTrue();
+    assertThat(mergeableInfo.contentMerged).isTrue();
+  }
+
+  @Test
+  public void mergeableForAbandonedChange() throws Exception {
+    PushOneCommit.Result r = createChange();
+    gApi.changes().id(r.getChangeId()).abandon();
+
+    MergeableInfo mergeableInfo = gApi.changes().id(r.getChangeId()).current().mergeable();
+    assertThat(mergeableInfo.mergeable).isFalse();
+    assertThat(mergeableInfo.commitMerged).isFalse();
+    assertThat(mergeableInfo.contentMerged).isFalse();
+  }
+
+  @Test
   public void mergeableOtherBranches() throws Exception {
     String head = getHead(repo(), HEAD).name();
     createBranchWithRevision(BranchNameKey.create(project, "mergeable-other-branch"), head);
@@ -2054,7 +2180,7 @@ public class RevisionIT extends AbstractDaemonTest {
     }
   }
 
-  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // TODO(issue-40014498): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
   // Instant
   @SuppressWarnings("JdkObsolete")
   private void assertPersonIdent(GitPerson gitPerson, PersonIdent expectedIdent) {
@@ -2705,14 +2831,33 @@ public class RevisionIT extends AbstractDaemonTest {
     return Iterables.transform(r, a -> Account.id(a._accountId));
   }
 
-  private static class TestCommitValidationListener implements CommitValidationListener {
-    public CommitReceivedEvent receiveEvent;
+  @Test
+  public void getCommitMessageFromOlderPatchSet() throws Exception {
+    PushOneCommit.Result result =
+        createChange(
+            testRepo, "master", "Initial commit message", FILE_NAME, "other content", null);
+    Change.Id changeId = result.getChange().getId();
+    PatchSet.Id initialPatchSetId = result.getPatchSetId();
 
-    @Override
-    public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent receiveEvent)
-        throws CommitValidationException {
-      this.receiveEvent = receiveEvent;
-      return ImmutableList.of();
-    }
+    pushFactory
+        .create(
+            admin.newIdent(),
+            testRepo,
+            "another commit message",
+            FILE_NAME,
+            "new content",
+            result.getChangeId())
+        .to("refs/for/master");
+
+    // Fetch the commit message for the initial patch set using the /content endpoint
+    String commitMessage =
+        gApi.changes()
+            .id(changeId.get())
+            .revision(initialPatchSetId.get())
+            .file(COMMIT_MSG)
+            .content()
+            .asString();
+
+    assertThat(commitMessage).startsWith("Initial commit message");
   }
 }

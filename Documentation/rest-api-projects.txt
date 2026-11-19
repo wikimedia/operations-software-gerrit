@@ -1975,6 +1975,39 @@ The content is returned as base64 encoded string.
   Ly8gQ29weXJpZ2h0IChDKSAyMDEwIFRoZSBBbmRyb2lkIE9wZW4gU291cmNlIFByb2plY...
 ----
 
+[[validation-options]]
+=== Get Validation Options
+--
+'GET /projects/link:#project-name[\{project-name\}]/branches/link:#branch-id[\{branch-id\}]/validation-options'
+--
+
+Retrieves the validation options applicable for the given project and branch.
+
+.Request
+----
+  GET /projects/link:#project-name[\{project-name\}]/branches/link:#branch-id[\{branch-id\}]/validation-options HTTP/1.0
+----
+
+As response a link:#https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#validation-options-infos[ValidationOptionInfos] entity is
+returned that contains all the validation options.
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    validation_options: [
+      {
+        name: "optionName",
+        description: "description of the validation option"
+      }
+    ]
+  }
+----
+
 [[suggest-reviewers]]
 === Suggest Reviewers
 --
@@ -3323,7 +3356,7 @@ label name.
     {
       "name": "Code-Review",
       "project": "All-Projects",
-      "function": "MaxWithBlock",
+      "function": "NoBlock",
       "values": {
         " 0": "No score",
         "-1": "I would prefer this is not submitted as is",
@@ -3368,7 +3401,7 @@ Labels that belong to the same project are sorted by label name.
     {
       "name": "Code-Review",
       "project": "All-Projects",
-      "function": "MaxWithBlock",
+      "function": "NoBlock",
       "values": {
         " 0": "No score",
         "-1": "I would prefer this is not submitted as is",
@@ -3384,7 +3417,7 @@ Labels that belong to the same project are sorted by label name.
     {
       "name": "Foo-Review",
       "project": "My-Project",
-      "function": "MaxWithBlock",
+      "function": "NoBlock",
       "values": {
         " 0": "No score",
         "-1": "I would prefer this is not submitted as is",
@@ -3399,6 +3432,52 @@ Labels that belong to the same project are sorted by label name.
     }
   ]
 ----
+
+[[list-voteable-labels]]
+To include only labels where the current user has permission to vote with positive values
+on a specific ref, the parameter `voteable-on-ref` can be set.
+
+The calling user must have read access to the `refs/meta/config` branch of the
+project. The ref name can be provided with or without the `refs/heads/` prefix.
+
+.Request
+----
+  GET /projects/My-Project/labels/?voteable-on-ref=master HTTP/1.0
+----
+
+As result a list of link:#label-definition-info[LabelDefinitionInfo] entities
+is returned that describe the labels where the current user has permission to vote
+with positive values on the specified ref. The returned labels are sorted by label name.
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  [
+    {
+      "name": "Code-Review",
+      "project": "All-Projects",
+      "function": "NoBlock",
+      "values": {
+        " 0": "No score",
+        "-1": "I would prefer this is not submitted as is",
+        "-2": "This shall not be submitted",
+        "+1": "Looks good to me, but someone else must approve",
+        "+2": "Looks good to me, approved"
+      },
+      "default_value": 0,
+      "can_override": true,
+      "copy_condition": "changekind:NO_CHANGE OR changekind:TRIVIAL_REBASE or is:MIN",
+      "allow_post_submit": true
+    }
+  ]
+----
+
+If the specified ref does not exist, the request will fail with `409 Conflict`.
+
 
 [[get-label]]
 === Get Label
@@ -3429,7 +3508,7 @@ returned that describes the label.
   {
     "name": "Code-Review",
     "project": "All-Projects",
-    "function": "MaxWithBlock",
+    "function": "NoBlock",
     "values": {
       " 0": "No score",
       "-1": "I would prefer this is not submitted as is",
@@ -3488,7 +3567,7 @@ returned that describes the created label.
   {
     "name": "Foo",
     "project_name": "My-Project",
-    "function": "MaxWithBlock",
+    "function": "NoBlock",
     "values": {
       " 0": "No score",
       "-1": "I would prefer this is not submitted as is",
@@ -3540,7 +3619,7 @@ returned that describes the updated label.
   {
     "name": "Code-Review",
     "project": "All-Projects",
-    "function": "MaxWithBlock",
+    "function": "NoBlock",
     "values": {
       " 0": "No score",
       "-1": "I would prefer this is not submitted as is",
@@ -3631,7 +3710,7 @@ The updates are processed in the following order:
     ],
     "update:" {
       "Bar-Review": {
-        "function": "MaxWithBlock"
+        "function": "NoBlock"
       },
       "Baz-Review": {
         "copy_condition": "is:MIN"
@@ -3684,7 +3763,7 @@ entity describing the resulting change.
     ],
     "update:" {
       "Bar-Review": {
-        "function": "MaxWithBlock"
+        "function": "NoBlock"
       },
       "Baz-Review": {
         "copy_condition": "is:MIN"
@@ -4163,15 +4242,22 @@ a new branch.
 
 [options="header",cols="1,^2,4"]
 |=======================
-|Field Name          ||Description
-|`ref`               |optional|
+|Field Name           ||Description
+|`ref`                |optional|
 The name of the branch. The prefix `refs/heads/` can be
 omitted. +
 If set, must match the branch ID in the URL.
-|`revision`          |optional|
+|`revision`           |optional|
 The base revision of the new branch. +
-If not set, `HEAD` will be used as base revision.
-|`validation_options`|optional|
+If not set and `create_empty_commit` is `true` the branch is created with an empty initial commit. +
+If not set and `create_empty_commit` is `false` or unset `HEAD` will be used as base revision.
+|`create_empty_commit`|`false` if not set|
+Whether the branch should be created with an empty initial commit. +
+Cannot be used in combination with setting a `revision`. +
+Can be used to review the initial content of a branch (create the branch with
+an empty initial commit, make a second commit with the initial content, e.g. by
+merging in another branch, and push the commit for review).
+|`validation_options` |optional|
 Map with key-value pairs that are forwarded as options to the ref operation
 validation listeners (e.g. can be used to skip certain validations). Which
 validation options are supported depends on the installed ref operation
@@ -5084,7 +5170,6 @@ specified, the project's `HEAD` will be used.
 |`message`   |optional|The tag message. When set, the tag will be created
 as an annotated tag.
 |=========================
-
 
 GERRIT
 ------

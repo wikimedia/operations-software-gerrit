@@ -146,6 +146,7 @@ public class CreateChange
   private final NotifyResolver notifyResolver;
   private final ContributorAgreementsChecker contributorAgreements;
   private final boolean disablePrivateChanges;
+  private final boolean useDiff3;
 
   @Inject
   CreateChange(
@@ -186,6 +187,9 @@ public class CreateChange
     this.mergeUtilFactory = mergeUtilFactory;
     this.notifyResolver = notifyResolver;
     this.contributorAgreements = contributorAgreements;
+    this.useDiff3 =
+        config.getBoolean(
+            "change", /* subsection= */ null, "diff3ConflictView", /* defaultValue= */ false);
   }
 
   @Override
@@ -533,6 +537,7 @@ public class CreateChange
         ins.setPrivate(input.isPrivate);
         ins.setWorkInProgress(input.workInProgress || !c.getFilesWithGitConflicts().isEmpty());
         ins.setGroups(groups);
+        c.getConflicts().ifPresent(ins::setConflicts);
 
         if (input.validationOptions != null) {
           ImmutableListMultimap.Builder<String, String> validationOptions =
@@ -702,9 +707,12 @@ public class CreateChange
     ObjectId treeId = mergeTip == null ? emptyTreeId(oi) : mergeTip.getTree().getId();
     logger.atFine().log("Tree ID of empty commit: %s", treeId.name());
     List<RevCommit> parents = mergeTip == null ? ImmutableList.of() : ImmutableList.of(mergeTip);
-    return rw.parseCommit(
-        CommitUtil.createCommitWithTree(
-            oi, authorIdent, committerIdent, parents, commitMessage, treeId));
+    CodeReviewCommit commit =
+        rw.parseCommit(
+            CommitUtil.createCommitWithTree(
+                oi, authorIdent, committerIdent, parents, commitMessage, treeId));
+    commit.setNoConflicts();
+    return commit;
   }
 
   private static CodeReviewCommit createCommitWithSuppliedTree(
@@ -780,7 +788,8 @@ public class CreateChange
               authorIdent,
               committerIdent,
               commitMessage,
-              rw);
+              rw,
+              this.useDiff3);
       logger.atFine().log("tree ID of merge commit: %s", mergeCommit.getTree().getId().name());
       return mergeCommit;
     } catch (NoMergeBaseException e) {

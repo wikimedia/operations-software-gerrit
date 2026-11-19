@@ -17,18 +17,25 @@ package com.google.gerrit.server.query.approval;
 import static java.util.stream.Collectors.joining;
 
 import com.google.common.base.Enums;
+import com.google.common.base.Splitter;
 import com.google.common.primitives.Ints;
 import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.GroupDescription;
 import com.google.gerrit.extensions.client.ChangeKind;
+import com.google.gerrit.extensions.registration.DynamicMap;
+import com.google.gerrit.index.query.Matchable;
+import com.google.gerrit.index.query.OperatorPredicate;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryBuilder;
 import com.google.gerrit.index.query.QueryParseException;
 import com.google.gerrit.server.account.GroupControl;
 import com.google.gerrit.server.group.GroupResolver;
+import com.google.gerrit.server.query.change.ChangeData;
+import com.google.gerrit.server.query.change.ChangeQueryBuilder;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
@@ -37,11 +44,39 @@ public class ApprovalQueryBuilder extends QueryBuilder<ApprovalContext, Approval
   private static final QueryBuilder.Definition<ApprovalContext, ApprovalQueryBuilder> mydef =
       new QueryBuilder.Definition<>(ApprovalQueryBuilder.class);
 
+  private static final Splitter PLUGIN_SPLITTER = Splitter.on("_");
+
+  public static class ChangeIsPredicate extends OperatorPredicate<ApprovalContext>
+      implements Matchable<ApprovalContext> {
+    private final Predicate<ChangeData> delegate;
+
+    public ChangeIsPredicate(Predicate<ChangeData> delegate, String value) {
+      super("changeis", value);
+      this.delegate = delegate;
+    }
+
+    @Override
+    public boolean match(ApprovalContext approvalContext) {
+      return delegate.asMatchable().match(approvalContext.changeData());
+    }
+
+    @Override
+    public int getCost() {
+      return delegate.asMatchable().getCost();
+    }
+  }
+
+  public interface UserInOperandFactory {
+    Predicate<ApprovalContext> create(UserInPredicate.Field field) throws QueryParseException;
+  }
+
   private final MagicValuePredicate.Factory magicValuePredicate;
   private final UserInPredicate.Factory userInPredicate;
   private final GroupResolver groupResolver;
   private final GroupControl.Factory groupControl;
   private final ListOfFilesUnchangedPredicate listOfFilesUnchangedPredicate;
+  private final ChangeQueryBuilder changeQueryBuilder;
+  private final DynamicMap<UserInOperandFactory> userInOperands;
 
   @Inject
   protected ApprovalQueryBuilder(
@@ -49,13 +84,17 @@ public class ApprovalQueryBuilder extends QueryBuilder<ApprovalContext, Approval
       UserInPredicate.Factory userInPredicate,
       GroupResolver groupResolver,
       GroupControl.Factory groupControl,
-      ListOfFilesUnchangedPredicate listOfFilesUnchangedPredicate) {
+      ListOfFilesUnchangedPredicate listOfFilesUnchangedPredicate,
+      ChangeQueryBuilder changeQueryBuilder,
+      DynamicMap<UserInOperandFactory> userInOperands) {
     super(mydef, null);
     this.magicValuePredicate = magicValuePredicate;
     this.userInPredicate = userInPredicate;
     this.groupResolver = groupResolver;
     this.groupControl = groupControl;
     this.listOfFilesUnchangedPredicate = listOfFilesUnchangedPredicate;
+    this.changeQueryBuilder = changeQueryBuilder;
+    this.userInOperands = userInOperands;
   }
 
   @Operator
@@ -93,13 +132,15 @@ public class ApprovalQueryBuilder extends QueryBuilder<ApprovalContext, Approval
   }
 
   @Operator
-  public Predicate<ApprovalContext> approverin(String group) throws QueryParseException {
-    return userInPredicate.create(UserInPredicate.Field.APPROVER, parseGroupOrThrow(group));
+  public Predicate<ApprovalContext> approverin(String groupOrPluginOperand)
+      throws QueryParseException {
+    return userin(UserInPredicate.Field.APPROVER, groupOrPluginOperand);
   }
 
   @Operator
-  public Predicate<ApprovalContext> uploaderin(String group) throws QueryParseException {
-    return userInPredicate.create(UserInPredicate.Field.UPLOADER, parseGroupOrThrow(group));
+  public Predicate<ApprovalContext> uploaderin(String groupOrPluginOperand)
+      throws QueryParseException {
+    return userin(UserInPredicate.Field.UPLOADER, groupOrPluginOperand);
   }
 
   @Operator
@@ -112,6 +153,26 @@ public class ApprovalQueryBuilder extends QueryBuilder<ApprovalContext, Approval
             "'%s' is not a valid value for operator 'has'."
                 + " The only valid value is 'unchanged-files'.",
             value));
+  }
+
+  @Operator
+  public Predicate<ApprovalContext> changeis(String value) throws QueryParseException {
+    Predicate<ChangeData> changePredicate = changeQueryBuilder.is(value);
+    return new ChangeIsPredicate(changePredicate, value);
+  }
+
+  private Predicate<ApprovalContext> userin(
+      UserInPredicate.Field field, String groupOrPluginOperand) throws QueryParseException {
+    // For plugins the value will be operandName_pluginName
+    List<String> names = PLUGIN_SPLITTER.splitToList(groupOrPluginOperand);
+    if (names.size() == 2) {
+      UserInOperandFactory op = userInOperands.get(names.get(1), names.get(0));
+      if (op != null) {
+        return op.create(field);
+      }
+    }
+
+    return userInPredicate.create(field, parseGroupOrThrow(groupOrPluginOperand));
   }
 
   private static <T extends Enum<T>> Optional<T> parseEnumValue(Class<T> clazz, String value) {

@@ -68,21 +68,24 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
             new PersonIdent(
                 "Change Owner",
                 "owner@example.com",
-                serverIdent.getWhen(),
-                serverIdent.getTimeZone())));
+                serverIdent.getWhenAsInstant(),
+                serverIdent.getZoneId())));
     assertParseFails(
         writeCommit(
             "Update change\n\nPatch-set: 1\n",
             new PersonIdent(
-                "Change Owner", "x@gerrit", serverIdent.getWhen(), serverIdent.getTimeZone())));
+                "Change Owner",
+                "x@gerrit",
+                serverIdent.getWhenAsInstant(),
+                serverIdent.getZoneId())));
     assertParseFails(
         writeCommit(
             "Update change\n\nPatch-set: 1\n",
             new PersonIdent(
                 "Change\n\u1234<Owner>",
                 "\n\nx<@>\u0002gerrit",
-                serverIdent.getWhen(),
-                serverIdent.getTimeZone())));
+                serverIdent.getWhenAsInstant(),
+                serverIdent.getZoneId())));
   }
 
   @Test
@@ -757,6 +760,99 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
     assertParseFails("Update change\n\nPatch-set: 1\nCurrent: blah");
   }
 
+  @Test
+  public void parseConflicts() throws Exception {
+    // No conflicts information present
+    assertParseSucceeds(
+        "Update change\n"
+            + "\n"
+            + "Branch: refs/heads/master\n"
+            + "Change-id: I577fb248e474018276351785930358ec0450e9f7\n"
+            + "Patch-set: 2\n"
+            + "Subject: This is a test change\n"
+            + "Commit: abcd1234abcd1234abcd1234abcd1234abcd1234\n");
+
+    // Conflicts information present, Contains-Conflicts: true
+    assertParseSucceeds(
+        "Update change\n"
+            + "\n"
+            + "Branch: refs/heads/master\n"
+            + "Change-id: I577fb248e474018276351785930358ec0450e9f7\n"
+            + "Patch-set: 2\n"
+            + "Subject: This is a test change\n"
+            + "Commit: abcd1234abcd1234abcd1234abcd1234abcd1234\n"
+            + "Contains-Conflicts: true\n"
+            + "Ours: 2d1a400a2e56090699f8aeb522ec1f82bbd54d57\n"
+            + "Theirs: aaeceb9f08df45748b1420ab2b0687906151ae59\n");
+
+    // Conflicts information present, Contains-Conflicts: false
+    assertParseSucceeds(
+        "Update change\n"
+            + "\n"
+            + "Branch: refs/heads/master\n"
+            + "Change-id: I577fb248e474018276351785930358ec0450e9f7\n"
+            + "Patch-set: 2\n"
+            + "Subject: This is a test change\n"
+            + "Commit: abcd1234abcd1234abcd1234abcd1234abcd1234\n"
+            + "Contains-Conflicts: false\n"
+            + "Ours: 2d1a400a2e56090699f8aeb522ec1f82bbd54d57\n"
+            + "Theirs: aaeceb9f08df45748b1420ab2b0687906151ae59\n");
+
+    // Ours/Theirs is optional if "Contains-Conflicts: false" is set
+    assertParseSucceeds(
+        "Update change\n"
+            + "\n"
+            + "Branch: refs/heads/master\n"
+            + "Change-id: I577fb248e474018276351785930358ec0450e9f7\n"
+            + "Patch-set: 2\n"
+            + "Subject: This is a test change\n"
+            + "Commit: abcd1234abcd1234abcd1234abcd1234abcd1234\n"
+            + "Contains-Conflicts: false\n");
+
+    // Ours/Theirs is ignored if Contains-Conflicts is missing
+    assertParseSucceeds(
+        "Update change\n"
+            + "\n"
+            + "Branch: refs/heads/master\n"
+            + "Change-id: I577fb248e474018276351785930358ec0450e9f7\n"
+            + "Patch-set: 2\n"
+            + "Subject: This is a test change\n"
+            + "Commit: abcd1234abcd1234abcd1234abcd1234abcd1234\n"
+            + "Ours: 2d1a400a2e56090699f8aeb522ec1f82bbd54d57\n"
+            + "Theirs: aaeceb9f08df45748b1420ab2b0687906151ae59\n");
+
+    // Parsing fails if "Contains-Conflicts: true" is present without Ours/Theirs
+    assertParseFails(
+        "Update change\n"
+            + "\n"
+            + "Branch: refs/heads/master\n"
+            + "Change-id: I577fb248e474018276351785930358ec0450e9f7\n"
+            + "Patch-set: 2\n"
+            + "Subject: This is a test change\n"
+            + "Commit: abcd1234abcd1234abcd1234abcd1234abcd1234\n"
+            + "Contains-Conflicts: true\n"
+            + "Theirs: aaeceb9f08df45748b1420ab2b0687906151ae59\n");
+    assertParseFails(
+        "Update change\n"
+            + "\n"
+            + "Branch: refs/heads/master\n"
+            + "Change-id: I577fb248e474018276351785930358ec0450e9f7\n"
+            + "Patch-set: 2\n"
+            + "Subject: This is a test change\n"
+            + "Commit: abcd1234abcd1234abcd1234abcd1234abcd1234\n"
+            + "Contains-Conflicts: true\n"
+            + "Ours: 2d1a400a2e56090699f8aeb522ec1f82bbd54d57\n");
+    assertParseFails(
+        "Update change\n"
+            + "\n"
+            + "Branch: refs/heads/master\n"
+            + "Change-id: I577fb248e474018276351785930358ec0450e9f7\n"
+            + "Patch-set: 2\n"
+            + "Subject: This is a test change\n"
+            + "Commit: abcd1234abcd1234abcd1234abcd1234abcd1234\n"
+            + "Contains-Conflicts: true\n");
+  }
+
   private RevCommit writeCommit(String body) throws Exception {
     ChangeNoteUtil noteUtil = injector.getInstance(ChangeNoteUtil.class);
     return writeCommit(
@@ -785,7 +881,7 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
       CommitBuilder cb = new CommitBuilder();
       cb.setParentId(notes.getRevision());
       cb.setAuthor(author);
-      cb.setCommitter(new PersonIdent(serverIdent, author.getWhen()));
+      cb.setCommitter(new PersonIdent(serverIdent, author.getWhenAsInstant()));
       cb.setTreeId(testRepo.tree());
       cb.setMessage(body);
       ObjectId id = ins.insert(cb);

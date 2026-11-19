@@ -29,8 +29,7 @@ import com.google.gerrit.server.patch.DiffUtil;
 import com.google.inject.Inject;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.text.SimpleDateFormat;
-import java.util.Calendar;
+import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -41,12 +40,33 @@ import org.eclipse.jgit.revwalk.RevWalk;
 import org.kohsuke.args4j.Option;
 
 public class GetPatch implements RestReadView<RevisionResource> {
+  private static final DateTimeFormatter DATE_FORMATTER =
+      DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss Z", Locale.US);
   private final GitRepositoryManager repoManager;
 
-  @Option(name = "--zip")
+  /**
+   * What is this base64 and zip business doing here? Just give me a patch file!
+   *
+   * <p>The reason these legacy types are here is to force paleolithic browsers like IE6 to not do
+   * cross site scripting. We have since invented X-Content-Type-Options: nosniff, which every
+   * browser released since IE8 supports, making this madness unnecessary in the modern era, thus
+   * the raw mode being available.
+   *
+   * <p>The only reason raw is not default is to not break old scripts.
+   */
+  private enum OutputType {
+    ZIP,
+    BASE64,
+    RAW,
+  }
+
+  @Option(name = "--zip", usage = "retrieve a zip file with one patch file inside it")
   private boolean zip;
 
-  @Option(name = "--download")
+  @Option(name = "--raw", usage = "retrieve a plain-text patch file rather than base64")
+  private boolean raw;
+
+  @Option(name = "--download", usage = "send the file with a download hint")
   private boolean download;
 
   @Option(name = "--path")
@@ -67,85 +87,83 @@ public class GetPatch implements RestReadView<RevisionResource> {
           ResourceConflictException,
           IOException,
           ResourceNotFoundException {
-    final Repository repo = repoManager.openRepository(rsrc.getProject());
-    boolean close = true;
-    try {
-      final RevWalk rw = new RevWalk(repo);
-      BinaryResult bin = null;
-      try {
-        final RevCommit commit = rw.parseCommit(rsrc.getPatchSet().commitId());
-        RevCommit[] parents = commit.getParents();
-        if (parentNum == null && parents.length > 1) {
-          throw new ResourceConflictException("Revision has more than 1 parent.");
-        }
-        if (parents.length == 0) {
-          throw new ResourceConflictException("Revision has no parent.");
-        }
-        if (parentNum != null && (parentNum < 1 || parentNum > parents.length)) {
-          throw new BadRequestException(String.format("invalid parent number: %d", parentNum));
-        }
-        final RevCommit base = parents[parentNum == null ? 0 : parentNum - 1];
-        rw.parseBody(base);
+    if (raw && zip) {
+      throw new BadRequestException("raw and zip options are mutually exclusive");
+    }
+    final OutputType outputType;
+    if (raw) {
+      outputType = OutputType.RAW;
+    } else if (zip) {
+      outputType = OutputType.ZIP;
+    } else {
+      outputType = OutputType.BASE64;
+    }
 
-        bin =
-            new BinaryResult() {
-              @Override
-              public void writeTo(OutputStream out) throws IOException {
-                if (zip) {
-                  ZipOutputStream zos = new ZipOutputStream(out);
-                  ZipEntry e = new ZipEntry(fileName(rw, commit));
-                  e.setTime(commit.getCommitTime() * 1000L);
-                  zos.putNextEntry(e);
-                  format(zos);
-                  zos.closeEntry();
-                  zos.finish();
-                } else {
-                  format(out);
+    try (Repository repo = repoManager.openRepository(rsrc.getProject());
+        RevWalk rw = new RevWalk(repo)) {
+      final RevCommit commit = rw.parseCommit(rsrc.getPatchSet().commitId());
+      RevCommit[] parents = commit.getParents();
+      if (parentNum == null && parents.length > 1) {
+        throw new ResourceConflictException("Revision has more than 1 parent.");
+      }
+      if (parents.length == 0) {
+        throw new ResourceConflictException("Revision has no parent.");
+      }
+      if (parentNum != null && (parentNum < 1 || parentNum > parents.length)) {
+        throw new BadRequestException(String.format("invalid parent number: %d", parentNum));
+      }
+      final RevCommit base = parents[parentNum == null ? 0 : parentNum - 1];
+      rw.parseBody(base);
+
+      try (BinaryResult bin =
+          new BinaryResult() {
+            @Override
+            public void writeTo(OutputStream out) throws IOException {
+              try (Repository repo = repoManager.openRepository(rsrc.getProject());
+                  RevWalk rw = new RevWalk(repo)) {
+                switch (outputType) {
+                  case ZIP -> {
+                    ZipOutputStream zos = new ZipOutputStream(out);
+                    ZipEntry e = new ZipEntry(fileName(rw, commit));
+                    e.setTime(commit.getCommitTime() * 1000L);
+                    zos.putNextEntry(e);
+                    format(zos);
+                    zos.closeEntry();
+                    zos.finish();
+                  }
+                  case RAW, BASE64 -> format(out);
                 }
               }
+            }
 
-              private void format(OutputStream out) throws IOException {
-                // Only add header if no path is specified
-                if (path == null) {
-                  out.write(formatEmailHeader(commit).getBytes(UTF_8));
-                }
-                DiffUtil.getFormattedDiff(repo, base, commit, path, out);
+            private void format(OutputStream out) throws IOException {
+              // Only add header if no path is specified
+              if (path == null) {
+                out.write(formatEmailHeader(commit).getBytes(UTF_8));
               }
-
-              @Override
-              public void close() throws IOException {
-                rw.close();
-                repo.close();
-              }
-            };
+              DiffUtil.getFormattedDiff(repo, base, commit, path, out);
+            }
+          }) {
 
         if (path != null && bin.asString().isEmpty()) {
           throw new ResourceNotFoundException(String.format("File not found: %s.", path));
         }
 
-        if (zip) {
-          bin.disableGzip()
-              .setContentType("application/zip")
-              .setAttachmentName(fileName(rw, commit) + ".zip");
-        } else {
-          bin.base64()
-              .setContentType("application/mbox")
-              .setAttachmentName(download ? fileName(rw, commit) + ".base64" : null);
+        switch (outputType) {
+          case ZIP ->
+              bin.disableGzip()
+                  .setContentType("application/zip")
+                  .setAttachmentName(fileName(rw, commit) + ".zip");
+          case BASE64 ->
+              bin.base64()
+                  .setContentType("application/mbox")
+                  .setAttachmentName(download ? fileName(rw, commit) + ".base64" : null);
+          case RAW ->
+              bin.setContentType("text/plain")
+                  .setAttachmentName(download ? fileName(rw, commit) : null);
         }
 
-        close = false;
         return Response.ok(bin);
-      } finally {
-        if (close) {
-          rw.close();
-          if (bin != null) {
-            bin.close();
-          }
-        }
-      }
-    } finally {
-      if (close) {
-        repo.close();
       }
     }
   }
@@ -188,9 +206,7 @@ public class GetPatch implements RestReadView<RevisionResource> {
   }
 
   private static String formatDate(PersonIdent author) {
-    SimpleDateFormat df = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss Z", Locale.US);
-    df.setCalendar(Calendar.getInstance(author.getTimeZone(), Locale.US));
-    return df.format(author.getWhen());
+    return author.getWhenAsInstant().atZone(author.getZoneId()).format(DATE_FORMATTER);
   }
 
   private static String fileName(RevWalk rw, RevCommit commit) throws IOException {

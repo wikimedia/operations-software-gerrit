@@ -148,6 +148,7 @@ import com.google.gerrit.server.util.ThreadLocalRequestContext;
 import com.google.gerrit.testing.ConfigSuite;
 import com.google.gerrit.testing.FakeEmailSender;
 import com.google.gerrit.testing.FakeEmailSender.Message;
+import com.google.gerrit.testing.GitRepositoryReferenceCountingManager;
 import com.google.gson.Gson;
 import com.google.inject.Inject;
 import com.google.inject.Module;
@@ -284,6 +285,7 @@ public abstract class AbstractDaemonTest {
   @Inject protected TestSshKeys sshKeys;
   @Inject protected TestTicker testTicker;
   @Inject protected ThreadLocalRequestContext localCtx;
+  @Inject protected SitePaths sitePaths;
 
   @Nullable public SshSession adminSshSession;
 
@@ -308,7 +310,6 @@ public abstract class AbstractDaemonTest {
   @Inject private PluginGuiceEnvironment pluginGuiceEnvironment;
   @Inject private PluginUser.Factory pluginUserFactory;
   @Inject private RequestScopeOperations requestScopeOperations;
-  @Inject private SitePaths sitePaths;
   @Inject private ProjectOperations projectOperations;
 
   private List<Repository> toClose;
@@ -412,15 +413,23 @@ public abstract class AbstractDaemonTest {
   }
 
   protected void restartAsSlave() throws Exception {
+    closeTestRepositories();
     server.restartAsSlave();
     server.getTestInjector().injectMembers(this);
     updateSshSessions();
   }
 
   protected void restart() throws Exception {
+    closeTestRepositories();
     server.restart();
     server.getTestInjector().injectMembers(this);
     updateSshSessions();
+  }
+
+  protected void closeTestRepositories() {
+    for (Repository repo : toClose) {
+      repo.close();
+    }
   }
 
   public void reindexAccount(Account.Id accountId) {
@@ -639,8 +648,21 @@ public abstract class AbstractDaemonTest {
 
   protected void afterTest() throws Exception {
     Transport.unregister(inProcessProtocol);
-    for (Repository repo : toClose) {
-      repo.close();
+    closeTestRepositories();
+
+    GitRepositoryManager repositoryManager =
+        server.getTestInjector().getInstance(GitRepositoryManager.class);
+    if (repositoryManager
+        instanceof GitRepositoryReferenceCountingManager repositoryCountingManager) {
+      try {
+        repositoryCountingManager.assertThatAllRepositoriesAreClosed(
+            configRule.description().getClassName()
+                + "."
+                + configRule.description().getMethodName()
+                + "()");
+      } finally {
+        repositoryCountingManager.clear();
+      }
     }
 
     // Set useDefaultTicker in afterTest, so the next beforeTest will use the default ticker

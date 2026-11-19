@@ -17,7 +17,6 @@ package com.google.gerrit.server.account.externalids.storage.notedb;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.server.account.externalids.ExternalId;
-import com.google.gerrit.server.account.externalids.ExternalIds;
 import com.google.gerrit.server.account.externalids.OnlineExternalIdCaseSensitivityMigratiorExecutor;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.SitePath;
@@ -42,7 +41,7 @@ public class OnlineExternalIdCaseSensitivityMigrator {
 
   private Executor executor;
   private ExternalIdCaseSensitivityMigrator.Factory migratorFactory;
-  private ExternalIds externalIds;
+  private ExternalIdsNoteDbImpl externalIds;
   private VersionManager versionManager;
   private Config globalConfig;
   private Path sitePath;
@@ -54,7 +53,7 @@ public class OnlineExternalIdCaseSensitivityMigrator {
   public OnlineExternalIdCaseSensitivityMigrator(
       @OnlineExternalIdCaseSensitivityMigratiorExecutor ExecutorService executor,
       ExternalIdCaseSensitivityMigrator.Factory migratorFactory,
-      ExternalIds externalIds,
+      ExternalIdsNoteDbImpl externalIds,
       VersionManager versionManager,
       @GerritServerConfig Config globalConfig,
       @SitePath Path sitePath) {

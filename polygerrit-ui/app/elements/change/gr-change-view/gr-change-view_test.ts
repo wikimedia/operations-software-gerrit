@@ -391,7 +391,7 @@ suite('gr-change-view tests', () => {
                   ><gr-change-star id="changeStar"> </gr-change-star>
                   <a aria-label="Change undefined" class="changeNumber"> </a>
                 </gr-button>
-                <span class="headerSubject"> </span>
+                <div class="headerSubject"></div>
                 <gr-copy-clipboard
                   class="changeCopyClipboard"
                   hideinput=""
@@ -1293,7 +1293,7 @@ suite('gr-change-view tests', () => {
     assertIsDefined(element.actions);
     sinon
       .stub(element.actions, 'showRevertDialog')
-      .callsFake(() => promise.resolve());
+      .callsFake(async () => promise.resolve());
 
     element.maybeShowRevertDialog();
     assert.isTrue(awaitPluginsLoadedStub.called);

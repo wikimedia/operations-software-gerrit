@@ -18,7 +18,7 @@ import com.google.auto.value.AutoValue;
 import com.google.common.base.CharMatcher;
 import com.google.gerrit.git.ObjectIds;
 import java.io.IOException;
-import java.text.SimpleDateFormat;
+import java.time.format.DateTimeFormatter;
 import org.eclipse.jgit.lib.AnyObjectId;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -28,6 +28,8 @@ import org.eclipse.jgit.revwalk.RevWalk;
 /** Representation of a magic file which appears as a file with content to Gerrit users. */
 @AutoValue
 public abstract class MagicFile {
+  public static final DateTimeFormatter DATE_FORMATTER =
+      DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss ZZZ");
 
   public static MagicFile forCommitMessage(ObjectReader reader, AnyObjectId commitId)
       throws IOException {
@@ -49,20 +51,17 @@ public abstract class MagicFile {
       throws IOException {
     StringBuilder b = new StringBuilder();
     switch (c.getParentCount()) {
-      case 0:
-        break;
-      case 1:
-        {
-          RevCommit p = c.getParent(0);
-          rw.parseBody(p);
-          b.append("Parent:     ");
-          b.append(abbreviateName(p, reader));
-          b.append(" (");
-          b.append(p.getShortMessage());
-          b.append(")\n");
-          break;
-        }
-      default:
+      case 0 -> {}
+      case 1 -> {
+        RevCommit p = c.getParent(0);
+        rw.parseBody(p);
+        b.append("Parent:     ");
+        b.append(abbreviateName(p, reader));
+        b.append(" (");
+        b.append(p.getShortMessage());
+        b.append(")\n");
+      }
+      default -> {
         for (int i = 0; i < c.getParentCount(); i++) {
           RevCommit p = c.getParent(i);
           rw.parseBody(p);
@@ -72,6 +71,7 @@ public abstract class MagicFile {
           b.append(p.getShortMessage());
           b.append(")\n");
         }
+      }
     }
     appendPersonIdent(b, "Author", c.getAuthorIdent());
     appendPersonIdent(b, "Commit", c.getCommitterIdent());
@@ -85,13 +85,9 @@ public abstract class MagicFile {
       RevCommit c = rw.parseCommit(commitId);
       StringBuilder b = new StringBuilder();
       switch (c.getParentCount()) {
-        case 0:
-          break;
-        case 1:
-          {
-            break;
-          }
-        default:
+        case 0 -> {}
+        case 1 -> {}
+        default -> {
           int uninterestingParent =
               comparisonType.isAgainstParent() ? comparisonType.getParentNum().get() : 1;
 
@@ -103,6 +99,7 @@ public abstract class MagicFile {
             b.append(commit.getShortMessage());
             b.append("\n");
           }
+        }
       }
       return MagicFile.builder().generatedContent(b.toString()).build();
     }
@@ -126,10 +123,8 @@ public abstract class MagicFile {
       }
       b.append("\n");
 
-      SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss ZZZ");
-      sdf.setTimeZone(person.getTimeZone());
       b.append(field).append("Date: ");
-      b.append(sdf.format(person.getWhen()));
+      b.append(person.getWhenAsInstant().atZone(person.getZoneId()).format(DATE_FORMATTER));
       b.append("\n");
     }
   }

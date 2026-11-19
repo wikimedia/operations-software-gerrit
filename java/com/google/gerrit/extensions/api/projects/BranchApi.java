@@ -16,8 +16,8 @@ package com.google.gerrit.extensions.api.projects;
 
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.extensions.api.changes.ChangeApi.SuggestedReviewersRequest;
+import com.google.gerrit.extensions.common.ValidationOptionInfos;
 import com.google.gerrit.extensions.restapi.BinaryResult;
-import com.google.gerrit.extensions.restapi.NotImplementedException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import java.util.List;
 
@@ -36,52 +36,13 @@ public interface BranchApi {
 
   SuggestedReviewersRequest suggestReviewers() throws RestApiException;
 
+  ValidationOptionInfos getValidationOptions() throws RestApiException;
+
   default SuggestedReviewersRequest suggestReviewers(String query) throws RestApiException {
     return suggestReviewers().withQuery(query);
   }
 
   default SuggestedReviewersRequest suggestCcs(String query) throws RestApiException {
     return suggestReviewers().forCc().withQuery(query);
-  }
-
-  /**
-   * A default implementation which allows source compatibility when adding new methods to the
-   * interface.
-   */
-  class NotImplemented implements BranchApi {
-    @Override
-    public BranchApi create(BranchInput in) throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
-    public SuggestedReviewersRequest suggestReviewers() throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
-    public SuggestedReviewersRequest suggestReviewers(String query) throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
-    public BranchInfo get() throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
-    public void delete() throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
-    public BinaryResult file(String path) throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
-    public List<ReflogEntryInfo> reflog() throws RestApiException {
-      throw new NotImplementedException();
-    }
   }
 }

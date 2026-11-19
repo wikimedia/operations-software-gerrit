@@ -41,6 +41,7 @@ import com.google.gerrit.entities.HumanComment;
 import com.google.gerrit.entities.LabelType;
 import com.google.gerrit.entities.LabelTypes;
 import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput.CommentInput;
@@ -64,7 +65,6 @@ import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.CurrentUser;
-import com.google.gerrit.server.DraftCommentsReader;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.ReviewerSet;
 import com.google.gerrit.server.account.AccountCache;
@@ -83,6 +83,8 @@ import com.google.gerrit.server.change.RevisionResource;
 import com.google.gerrit.server.change.WorkInProgressOp;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.extensions.events.ReviewerAdded;
+import com.google.gerrit.server.git.CommitUtil;
+import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.patch.PatchListNotAvailableException;
@@ -110,9 +112,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.stream.Collectors;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Config;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectInserter;
+import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.revwalk.RevWalk;
 
 @Singleton
 public class PostReview implements RestModifyView<RevisionResource, ReviewInput> {
@@ -150,8 +155,6 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
   private final ChangeResource.Factory changeResourceFactory;
   private final AccountCache accountCache;
   private final ApprovalsUtil approvalsUtil;
-  private final DraftCommentsReader draftCommentsReader;
-
   private final AccountResolver accountResolver;
   private final ReviewerModifier reviewerModifier;
   private final Metrics metrics;
@@ -166,6 +169,9 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
   private final boolean strictLabels;
   private final ChangeJson.Factory changeJsonFactory;
   private final CommentsValidator commentsValidator;
+  private final CommitUtil commitUtil;
+
+  private final GitRepositoryManager gitManager;
 
   @Inject
   PostReview(
@@ -174,7 +180,6 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       ChangeResource.Factory changeResourceFactory,
       AccountCache accountCache,
       ApprovalsUtil approvalsUtil,
-      DraftCommentsReader draftCommentsReader,
       AccountResolver accountResolver,
       ReviewerModifier reviewerModifier,
       Metrics metrics,
@@ -187,12 +192,13 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       ReplyAttentionSetUpdates replyAttentionSetUpdates,
       ReviewerAdded reviewerAdded,
       ChangeJson.Factory changeJsonFactory,
-      CommentsValidator commentsValidator) {
+      CommentsValidator commentsValidator,
+      CommitUtil commitUtil,
+      GitRepositoryManager gitManager) {
     this.retryHelper = retryHelper;
     this.postReviewOpFactory = postReviewOpFactory;
     this.changeResourceFactory = changeResourceFactory;
     this.accountCache = accountCache;
-    this.draftCommentsReader = draftCommentsReader;
     this.approvalsUtil = approvalsUtil;
     this.accountResolver = accountResolver;
     this.reviewerModifier = reviewerModifier;
@@ -207,6 +213,8 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
     this.strictLabels = gerritConfig.getBoolean("change", "strictLabels", false);
     this.changeJsonFactory = changeJsonFactory;
     this.commentsValidator = commentsValidator;
+    this.commitUtil = commitUtil;
+    this.gitManager = gitManager;
   }
 
   @Override
@@ -251,9 +259,6 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
     if (input.comments != null) {
       input.comments = cleanUpComments(input.comments);
       commentsValidator.checkComments(revision, input.comments);
-    }
-    if (input.draftIdsToPublish != null) {
-      checkDraftIds(revision, input.draftIdsToPublish, input.drafts);
     }
     if (input.robotComments != null) {
       input.robotComments = cleanUpComments(input.robotComments);
@@ -348,23 +353,34 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       }
     }
 
-    BatchUpdates.Result batchUpdateResult =
-        runBatchUpdate(projectState, revision, input, ts, notify, reviewerResults, ccOrReviewer);
-    ChangeData cd =
-        batchUpdateResult.getChangeData(revision.getProject(), revision.getChange().getId());
-    for (ReviewerModification reviewerResult : reviewerResults) {
-      reviewerResult.gatherResults(cd);
-    }
+    try (Repository repo = gitManager.openRepository(projectState.getProject().getNameKey())) {
+      BatchUpdates.Result batchUpdateResult =
+          runBatchUpdate(
+              projectState, revision, input, ts, notify, reviewerResults, ccOrReviewer, repo);
+      ChangeData cd =
+          batchUpdateResult.getChangeData(revision.getProject(), revision.getChange().getId());
+      ObjectId oldId = cd.metaRevisionOrThrow();
+      ObjectId newId = repo.exactRef(RefNames.changeMetaRef(cd.change().getId())).getObjectId();
 
-    // Sending emails and events from ReviewersOps was suppressed so we can send a single batch
-    // email/event here.
-    batchEmailReviewers(revision.getUser(), revision.getChange(), reviewerResults, notify);
-    batchReviewerEvents(revision.getUser(), cd, revision.getPatchSet(), reviewerResults, ts);
+      if (!oldId.equals(newId)) {
+        // Re-read change to take into account results of the update.
+        cd.reloadChange();
+      }
 
-    if (input.responseFormatOptions != null) {
-      output.changeInfo = changeJsonFactory.create(input.responseFormatOptions).format(cd);
-    } else {
-      output.changeInfo = changeJsonFactory.noOptions().format(cd);
+      for (ReviewerModification reviewerResult : reviewerResults) {
+        reviewerResult.gatherResults(cd);
+      }
+
+      // Sending emails and events from ReviewersOps was suppressed so we can send a single batch
+      // email/event here.
+      batchEmailReviewers(revision.getUser(), revision.getChange(), reviewerResults, notify);
+      batchReviewerEvents(revision.getUser(), cd, revision.getPatchSet(), reviewerResults, ts);
+
+      if (input.responseFormatOptions != null) {
+        output.changeInfo = changeJsonFactory.create(input.responseFormatOptions).format(cd);
+      } else {
+        output.changeInfo = changeJsonFactory.noOptions().format(cd);
+      }
     }
 
     return Response.ok(output);
@@ -377,7 +393,8 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       Instant ts,
       NotifyResolver.Result notify,
       List<ReviewerModification> reviewerResults,
-      boolean ccOrReviewer)
+      boolean ccOrReviewer,
+      Repository repo)
       throws UpdateException, RestApiException {
     return retryHelper
         .changeUpdate(
@@ -385,8 +402,11 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
             updateFactory -> {
               try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
                 try (BatchUpdate bu =
-                    updateFactory.create(
-                        revision.getChange().getProject(), revision.getUser(), ts)) {
+                        updateFactory.create(
+                            revision.getChange().getProject(), revision.getUser(), ts);
+                    ObjectInserter oi = repo.newObjectInserter();
+                    RevWalk revWalk = new RevWalk(oi.newReader())) {
+                  bu.setRepository(repo, revWalk, oi);
                   bu.setNotify(notify);
 
                   // Apply reviewer changes first. Revision emails should be sent to the
@@ -415,6 +435,13 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
                     WorkInProgressOp wipOp =
                         workInProgressOpFactory.create(
                             input.workInProgress, new WorkInProgressOp.Input());
+                    if (input.ready && revision.getChange().getRevertOf() != null) {
+                      commitUtil.addChangeRevertedNotificationOps(
+                          bu,
+                          revision.getChange().getRevertOf(),
+                          revision.getChange().getId(),
+                          revision.getChange().getKey().get().substring(1));
+                    }
                     wipOp.suppressEmail();
                     bu.addOp(revision.getChange().getId(), wipOp);
                   }
@@ -689,42 +716,6 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
         .filter(Objects::nonNull)
         .filter(comment -> !Strings.nullToEmpty(comment.message).trim().isEmpty())
         .collect(toList());
-  }
-
-  /**
-   * Asserts that the draft IDs to publish are valid, i.e. they exist and belong to the current
-   * user. If the {@code draftHandling} parameter is equal to {@link DraftHandling#PUBLISH}, then
-   * draft IDs should all correspond to the target revision, otherwise we throw a
-   * BadRequestException.
-   */
-  private void checkDraftIds(
-      RevisionResource resource, List<String> draftIds, DraftHandling draftHandling)
-      throws BadRequestException {
-    Map<String, HumanComment> draftsByUuid =
-        draftCommentsReader
-            .getDraftsByChangeAndDraftAuthor(resource.getNotes(), resource.getUser().getAccountId())
-            .stream()
-            .collect(Collectors.toMap(c -> c.key.uuid, c -> c));
-    List<String> nonExistingDraftIds =
-        draftIds.stream().filter(id -> !draftsByUuid.containsKey(id)).collect(toList());
-    if (!nonExistingDraftIds.isEmpty()) {
-      throw new BadRequestException("Non-existing draft IDs: " + nonExistingDraftIds);
-    }
-    if (draftHandling == DraftHandling.PUBLISH_ALL_REVISIONS
-        || draftHandling == DraftHandling.KEEP) {
-      return;
-    }
-    List<String> draftsForOtherRevisions =
-        draftIds.stream()
-            .filter(id -> draftsByUuid.get(id).key.patchSetId != resource.getPatchSet().number())
-            .collect(toList());
-    if (!draftsForOtherRevisions.isEmpty()) {
-      throw new BadRequestException(
-          String.format(
-              "Draft comments for other revisions cannot be published when DraftHandling = PUBLISH."
-                  + " (draft IDs: %s)",
-              draftsForOtherRevisions));
-    }
   }
 
   private void checkRobotComments(

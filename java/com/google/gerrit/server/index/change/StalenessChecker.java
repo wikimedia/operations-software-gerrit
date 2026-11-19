@@ -131,7 +131,7 @@ public class StalenessChecker {
     if (results.size() > 1) {
       return StalenessCheckResult.stale("Multiple documents found in index for %s", id);
     }
-    ChangeData cd = results.get(0);
+    ChangeData cd = results.getFirst();
     return check(repoManager, id, cd.getRefStates(), parsePatterns(cd));
   }
 

@@ -75,6 +75,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import org.eclipse.jgit.attributes.AttributesNodeProvider;
 import org.eclipse.jgit.diff.Sequence;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.dircache.DirCacheBuilder;
@@ -133,6 +134,10 @@ public class MergeUtil {
     return cfg.getBoolean("core", null, "useRecursiveMerge", true);
   }
 
+  public static boolean useGitattributesForMerge(Config cfg) {
+    return cfg.getBoolean("core", null, "useGitattributesForMerge", false);
+  }
+
   public static ThreeWayMergeStrategy getMergeStrategy(Config cfg) {
     return useRecursiveMerge(cfg) ? MergeStrategy.RECURSIVE : MergeStrategy.RESOLVE;
   }
@@ -143,6 +148,7 @@ public class MergeUtil {
   private final ProjectState project;
   private final boolean useContentMerge;
   private final boolean useRecursiveMerge;
+  private final boolean useGitattributesForMerge;
   private final PluggableCommitMessageGenerator commitMessageGenerator;
   private final ChangeUtil changeUtil;
 
@@ -182,6 +188,7 @@ public class MergeUtil {
     this.project = project;
     this.useContentMerge = useContentMerge;
     this.useRecursiveMerge = useRecursiveMerge(serverConfig);
+    this.useGitattributesForMerge = useGitattributesForMerge(serverConfig);
   }
 
   public CodeReviewCommit getFirstFastForward(
@@ -222,45 +229,16 @@ public class MergeUtil {
       CodeReviewRevWalk rw,
       int parentIndex,
       boolean ignoreIdenticalTree,
-      boolean allowConflicts)
-      throws IOException,
-          MergeIdenticalTreeException,
-          MergeConflictException,
-          MethodNotAllowedException,
-          InvalidMergeStrategyException {
-    return createCherryPickFromCommit(
-        inserter,
-        repoConfig,
-        mergeTip,
-        originalCommit,
-        cherryPickCommitterIdent,
-        commitMsg,
-        rw,
-        parentIndex,
-        ignoreIdenticalTree,
-        allowConflicts,
-        false);
-  }
-
-  public CodeReviewCommit createCherryPickFromCommit(
-      ObjectInserter inserter,
-      Config repoConfig,
-      RevCommit mergeTip,
-      RevCommit originalCommit,
-      PersonIdent cherryPickCommitterIdent,
-      String commitMsg,
-      CodeReviewRevWalk rw,
-      int parentIndex,
-      boolean ignoreIdenticalTree,
       boolean allowConflicts,
-      boolean diff3Format)
+      boolean diff3Format,
+      AttributesNodeProvider attributesNodeProvider)
       throws IOException,
           MergeIdenticalTreeException,
           MergeConflictException,
           MethodNotAllowedException,
           InvalidMergeStrategyException {
 
-    ThreeWayMerger m = newThreeWayMerger(inserter, repoConfig);
+    ThreeWayMerger m = newThreeWayMerger(inserter, repoConfig, attributesNodeProvider);
     m.setBase(originalCommit.getParent(parentIndex));
 
     DirCache dc = DirCache.newInCore();
@@ -355,22 +333,9 @@ public class MergeUtil {
     cherryPickCommit.setMessage(commitMsg);
     matchAuthorToCommitterDate(project, cherryPickCommit);
     CodeReviewCommit commit = rw.parseCommit(inserter.insert(cherryPickCommit));
-    commit.setFilesWithGitConflicts(filesWithGitConflicts);
+    commit.setConflicts(mergeTip, originalCommit, filesWithGitConflicts);
     logger.atFine().log("CherryPick commitId=%s", commit.name());
     return commit;
-  }
-
-  public static ObjectId mergeWithConflicts(
-      RevWalk rw,
-      ObjectInserter ins,
-      DirCache dc,
-      String oursName,
-      RevCommit ours,
-      String theirsName,
-      RevCommit theirs,
-      Map<String, MergeResult<? extends Sequence>> mergeResults)
-      throws IOException {
-    return mergeWithConflicts(rw, ins, dc, oursName, ours, theirsName, theirs, mergeResults, false);
   }
 
   @SuppressWarnings("resource") // TemporaryBuffer requires calling close before reading.
@@ -482,37 +447,11 @@ public class MergeUtil {
       RevCommit originalCommit,
       String mergeStrategy,
       boolean allowConflicts,
-      PersonIdent committerIdent,
-      String commitMsg,
-      CodeReviewRevWalk rw)
-      throws IOException,
-          MergeIdenticalTreeException,
-          MergeConflictException,
-          InvalidMergeStrategyException {
-    return createMergeCommit(
-        inserter,
-        repoConfig,
-        mergeTip,
-        originalCommit,
-        mergeStrategy,
-        allowConflicts,
-        committerIdent,
-        committerIdent,
-        commitMsg,
-        rw);
-  }
-
-  public static CodeReviewCommit createMergeCommit(
-      ObjectInserter inserter,
-      Config repoConfig,
-      RevCommit mergeTip,
-      RevCommit originalCommit,
-      String mergeStrategy,
-      boolean allowConflicts,
       PersonIdent authorIdent,
       PersonIdent committerIdent,
       String commitMsg,
-      CodeReviewRevWalk rw)
+      CodeReviewRevWalk rw,
+      boolean diff3Format)
       throws IOException,
           MergeIdenticalTreeException,
           MergeConflictException,
@@ -594,7 +533,8 @@ public class MergeUtil {
               mergeTip,
               "SOURCE BRANCH",
               originalCommit,
-              mergeResults);
+              mergeResults,
+              diff3Format);
     }
 
     CommitBuilder mergeCommit = new CommitBuilder();
@@ -604,7 +544,7 @@ public class MergeUtil {
     mergeCommit.setCommitter(committerIdent);
     mergeCommit.setMessage(commitMsg);
     CodeReviewCommit commit = rw.parseCommit(inserter.insert(mergeCommit));
-    commit.setFilesWithGitConflicts(filesWithGitConflicts);
+    commit.setConflicts(mergeTip, originalCommit, filesWithGitConflicts);
     return commit;
   }
 
@@ -795,6 +735,7 @@ public class MergeUtil {
       CodeReviewCommit mergeTip,
       CodeReviewCommit toMerge) {
     if (hasMissingDependencies(mergeSorter, toMerge)) {
+      logger.atFine().log("%s cannot be merged due to missing dependencies", toMerge.name());
       return false;
     }
 
@@ -803,11 +744,13 @@ public class MergeUtil {
 
   private boolean canMerge(CodeReviewCommit mergeTip, Repository repo, CodeReviewCommit toMerge) {
     try (ObjectInserter ins = new InMemoryInserter(repo)) {
-      return newThreeWayMerger(ins, repo.getConfig()).merge(mergeTip, toMerge);
+      return newThreeWayMerger(ins, repo).merge(mergeTip, toMerge);
     } catch (LargeObjectException e) {
-      logger.atWarning().log("Cannot merge due to LargeObjectException: %s", toMerge.name());
+      logger.atWarning().log("%s cannot be merged due to LargeObjectException", toMerge.name());
       return false;
     } catch (NoMergeBaseException e) {
+      logger.atFine().log(
+          "%s cannot be merged because no merge base could be found", toMerge.name());
       return false;
     } catch (IOException e) {
       throw new StorageException("Cannot merge " + toMerge.name(), e);
@@ -875,7 +818,7 @@ public class MergeUtil {
       // that on the current merge tip.
       //
       try (ObjectInserter ins = new InMemoryInserter(repo)) {
-        ThreeWayMerger m = newThreeWayMerger(ins, repo.getConfig());
+        ThreeWayMerger m = newThreeWayMerger(ins, repo);
         m.setBase(toMerge.getParent(0));
         return m.merge(mergeTip, toMerge);
       } catch (IOException e) {
@@ -911,9 +854,10 @@ public class MergeUtil {
       Config repoConfig,
       BranchNameKey destBranch,
       CodeReviewCommit mergeTip,
-      CodeReviewCommit n)
+      CodeReviewCommit n,
+      AttributesNodeProvider attributesNodeProvider)
       throws InvalidMergeStrategyException {
-    ThreeWayMerger m = newThreeWayMerger(inserter, repoConfig);
+    ThreeWayMerger m = newThreeWayMerger(inserter, repoConfig, attributesNodeProvider);
     try {
       if (m.merge(mergeTip, n)) {
         return writeMergeCommit(
@@ -1039,9 +983,20 @@ public class MergeUtil {
         .collect(joining(",", "Merge changes ", merged.size() > 5 ? ", ..." : ""));
   }
 
-  public ThreeWayMerger newThreeWayMerger(ObjectInserter inserter, Config repoConfig)
+  public ThreeWayMerger newThreeWayMerger(ObjectInserter inserter, Repository repo)
       throws InvalidMergeStrategyException {
-    return newThreeWayMerger(inserter, repoConfig, mergeStrategyName());
+    return newThreeWayMerger(inserter, repo.getConfig(), repo.createAttributesNodeProvider());
+  }
+
+  public ThreeWayMerger newThreeWayMerger(
+      ObjectInserter inserter, Config repoConfig, AttributesNodeProvider attributesNodeProvider)
+      throws InvalidMergeStrategyException {
+    return newThreeWayMerger(
+        inserter,
+        repoConfig,
+        attributesNodeProvider,
+        mergeStrategyName(),
+        useGitattributesForMerge);
   }
 
   public String mergeStrategyName() {
@@ -1073,13 +1028,20 @@ public class MergeUtil {
   }
 
   public static ThreeWayMerger newThreeWayMerger(
-      ObjectInserter inserter, Config repoConfig, String strategyName)
+      ObjectInserter inserter,
+      Config repoConfig,
+      AttributesNodeProvider attributesNodeProvider,
+      String strategyName,
+      boolean useGitattributesForMerge)
       throws InvalidMergeStrategyException {
     Merger m = newMerger(inserter, repoConfig, strategyName);
     checkArgument(
         m instanceof ThreeWayMerger,
         "merge strategy %s does not support three-way merging",
         strategyName);
+    if (m instanceof ResolveMerger && useGitattributesForMerge) {
+      ((ResolveMerger) m).setAttributesNodeProvider(attributesNodeProvider);
+    }
     return (ThreeWayMerger) m;
   }
 
@@ -1219,8 +1181,8 @@ public class MergeUtil {
       commit.setAuthor(
           new PersonIdent(
               commit.getAuthor(),
-              commit.getCommitter().getWhen(),
-              commit.getCommitter().getTimeZone()));
+              commit.getCommitter().getWhenAsInstant(),
+              commit.getCommitter().getZoneId()));
     }
   }
 }

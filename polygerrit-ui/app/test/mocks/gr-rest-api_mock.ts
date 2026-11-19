@@ -10,12 +10,12 @@ import {
   AccountExternalIdInfo,
   AccountInfo,
   AccountStateInfo,
+  ValidationOptionsInfo,
   ServerInfo,
   ProjectInfo,
   AccountCapabilityInfo,
   SuggestedReviewerInfo,
   GroupNameToGroupInfoMap,
-  ParsedJSON,
   EditPreferencesInfo,
   SshKeyInfo,
   RepoName,
@@ -77,7 +77,6 @@ import {
   createDefaultPreferences,
 } from '../../constants/constants';
 import {ParsedChangeInfo} from '../../types/types';
-import {readJSONResponsePayload} from '../../elements/shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
 import {ErrorCallback} from '../../api/rest';
 
 export const grRestApiMock: RestApiService = {
@@ -269,7 +268,7 @@ export const grRestApiMock: RestApiService = {
   getChangesSubmittedTogether(): Promise<SubmittedTogetherInfo | undefined> {
     return Promise.resolve(createSubmittedTogetherInfo());
   },
-  getDetailedChangesWithActions(changeNums: NumericChangeId[]) {
+  getDetailedChangesWithActions(changeNums: NumericChangeId[], _?: boolean) {
     return Promise.resolve(
       changeNums.map(changeNum => {
         return {
@@ -409,9 +408,6 @@ export const grRestApiMock: RestApiService = {
   getRepos(): Promise<ProjectInfoWithName[] | undefined> {
     return Promise.resolve([]);
   },
-  getResponseObject(response: Response): Promise<ParsedJSON> {
-    return readJSONResponsePayload(response).then(payload => payload.parsed);
-  },
   getReviewedFiles(): Promise<string[] | undefined> {
     return Promise.resolve([]);
   },
@@ -435,6 +431,9 @@ export const grRestApiMock: RestApiService = {
   },
   getTopMenus(): Promise<TopMenuEntryInfo[] | undefined> {
     return Promise.resolve([]);
+  },
+  getValidationOptions(): Promise<ValidationOptionsInfo | undefined> {
+    return Promise.resolve(undefined);
   },
   getVersion(): Promise<string | undefined> {
     return Promise.resolve('');

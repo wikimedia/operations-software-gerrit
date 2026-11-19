@@ -31,6 +31,7 @@ import com.google.inject.AbstractModule;
  * bound in {@link RestModule}.
  */
 public class RestApiModule extends AbstractModule {
+
   @Override
   protected void configure() {
     install(new AccessRestApiModule());

@@ -65,6 +65,20 @@ export declare interface TextRange {
 }
 
 /**
+ * Represents a user selected code range in the diff.
+ */
+export declare interface FileRangeSelection {
+  /** The text range of the selection. */
+  text_range: TextRange;
+
+  /** The path of the file. */
+  file_path: string;
+
+  /** The side of the file. */
+  side: Side;
+}
+
+/**
  * Represents a syntax block in a code (e.g. method, function, class, if-else).
  */
 export declare interface SyntaxBlock {
@@ -360,6 +374,15 @@ export declare interface RenderProgressEventDetail {
   linesRendered: number;
 }
 
+/**
+ * The detail of the 'copy-info' event dispatched by gr-diff.
+ */
+export declare interface CopyInfoEventDetail {
+  side: Side;
+  range: TextRange;
+  length: number;
+}
+
 export declare interface DisplayLine {
   side: Side;
   lineNum: LineNumber;
@@ -444,6 +467,12 @@ export declare interface DiffLayer {
     line: GrDiffLine,
     side: Side
   ): void;
+}
+
+export interface CommentRangeLayer {
+  id?: string;
+  side: Side;
+  range: CommentRange;
 }
 
 /** Data used by GrAnnotation to generate elements. */
@@ -534,6 +563,7 @@ export declare interface GrDiffCursor {
   moveToPreviousCommentThread(): CursorMoveResult;
 
   createCommentInPlace(): void;
+  getSelectedRange(): FileRangeSelection | undefined;
   resetScrollMode(): void;
 
   /**

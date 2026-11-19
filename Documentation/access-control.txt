@@ -428,6 +428,10 @@ the branch it's uploaded to.
 Further documentation on how to push can be found on the
 link:user-upload.html#push_create[Upload changes] page.
 
+**NOTE**: All change related permissions should normally set using
+"refs/heads/<ref>" branch and not using "refs/for/<ref>". Unless specifically
+stated otherwise.
+
 
 [[access_categories]]
 == Access Categories
@@ -440,8 +444,8 @@ within projects, enabling functionality for that group's members.
 === Abandon
 
 This category controls whether users are allowed to abandon changes
-to projects in Gerrit. It can give permission to abandon a specific
-change to a given ref.
+to projects in Gerrit. If granted, it gives permission to abandon
+changes against the specified ref.
 
 The uploader of a change, anyone granted the <<category_owner,`Owner`>>
 permission at the ref or project level, and anyone granted the
@@ -766,6 +770,11 @@ The `Read` category controls visibility to the project's
 changes, comments, code diffs, and Git access over SSH or HTTP.
 A user must have this access granted in order to see a project, its
 changes, or any of its data.
+
+Users that have the link:#capability_administrateServer[Administrate
+Server] global capability can always read all changes, branches and
+tag, including private change and `refs/meta/config` branches, even
+if the `Read` access right is not assigned or blocked.
 
 [[read_special_behaviors]]
 ==== Special behaviors
@@ -1372,7 +1381,9 @@ capabilities granted to them automatically.
 In most installations only those users who have direct filesystem and
 database access should be granted this capability.
 
-This capability does not imply any other access rights. Users that have
+This capability includes read access to all changes, branches and tags,
+including private changes and `refs/meta/config` branches. Beyond that,
+this capability does not imply any other access rights. Users that have
 this capability do not automatically get code review approval or submit
 rights in projects. This is a feature designed to permit administrative
 users to otherwise access Gerrit as any other normal user would,
@@ -1421,6 +1432,21 @@ Allow project creation.
 This capability allows the granted group to create projects via the web UI, via
 link:rest-api-projects.html#create-project][REST] and via
 link:cmd-create-project.html[SSH].
+
+
+[[capability_deleteGroup]]
+=== Delete Group
+
+Allow deletion of internal groups. Groups are used to grant users access to
+different actions in projects. This capability allows the granted group members
+to delete Gerrit internal groups via the
+link:rest-api-groups.html#delete-group[REST API].
+
+By default this action is limited to users with the
+link:#capability_administrateServer[Administrate Server] capability.
+
+This capability is only effective when `groups.enableDeleteGroup` is enabled.
+
 
 [[capability_emailReviewers]]
 === Email Reviewers
@@ -1565,11 +1591,6 @@ link:cmd-stream-events.html[stream Gerrit events via ssh].
 Allow checking access rights for arbitrary (user, project) pairs,
 using the link:rest-api-projects.html#check-access[check.access]
 endpoint.
-
-In addition, when a request fails due to permission errors and the caller has
-this capability, ACL info is returned that contains information about the
-permissions rules that have been checked. This allows the user to understand
-which permissions rule caused request to be rejected.
 
 [[capability_viewAllAccounts]]
 === View All Accounts

@@ -967,6 +967,10 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     Project.NameKey visibleProject = Project.nameKey("visibleProject");
     createProject(visibleProject);
     Change visibleChange = insert(visibleProject, newChange(visibleProject));
+
+    // Use a non-admin user, since admins can always see all changes.
+    setRequestContextForUser(createAccount("user2"));
+
     assertQuery("project:visibleProject", visibleChange);
     assertQuery("project:hiddenProject");
     assertQuery("project:visibleProject OR project:hiddenProject", visibleChange);
@@ -3182,6 +3186,41 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
   }
 
   @Test
+  @GerritConfig(name = "core.useGitattributesForMerge", value = "true")
+  public void conflictsUnionContentMerge() throws Exception {
+    Project.NameKey project = Project.nameKey("repo");
+    repo = createAndOpenProject(project);
+    TestRepository<Repository>.CommitBuilder builder =
+        repo.commit().add(".gitattributes", "*.txt merge=union");
+    builder.create();
+    RevCommit commit1 =
+        repo.parseBody(
+            builder
+                .child()
+                .add("file1", "contents1")
+                .add("dir/file2.txt", "contents2")
+                .add("dir/file3", "contents3")
+                .create());
+    RevCommit commit2 = repo.parseBody(builder.child().add("file1", "contents1").create());
+    RevCommit commit3 =
+        repo.parseBody(builder.child().add("dir/file2.txt", "contents2 different").create());
+    RevCommit commit4 = repo.parseBody(builder.child().add("file4", "contents4").create());
+    RevCommit commit5 =
+        repo.parseBody(builder.child().add("dir/file3", "contents3 different").create());
+    Change change1 = insert(project, newChangeForCommit(repo, commit1));
+    Change change2 = insert(project, newChangeForCommit(repo, commit2));
+    Change change3 = insert(project, newChangeForCommit(repo, commit3));
+    Change change4 = insert(project, newChangeForCommit(repo, commit4));
+    Change change5 = insert(project, newChangeForCommit(repo, commit5));
+
+    assertQuery("conflicts:" + change1.getId().get(), change5);
+    assertQuery("conflicts:" + change2.getId().get());
+    assertQuery("conflicts:" + change3.getId().get());
+    assertQuery("conflicts:" + change4.getId().get());
+    assertQuery("conflicts:" + change5.getId().get(), change1);
+  }
+
+  @Test
   public void conflictsForChangeStackedOnOpenChange() throws Exception {
     ImmutableList<Change> changes =
         createSameFileModeChangesWithOneStackedOnOpenChange(Project.nameKey("repo"));
@@ -3827,10 +3866,10 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     assertQuery("-is:submittable", change2);
 
     assertQuery("label:CodE-RevieW=ok", change1);
-    assertQuery("label:CodE-RevieW=ok,user=" + userAccount.preferredEmail(), change1);
-    assertQuery("label:CodE-RevieW=ok,Administrators", change1);
-    assertQuery("label:CodE-RevieW=ok,group=Administrators", change1);
-    assertQuery("label:CodE-RevieW=ok,owner", change1);
+    assertQuery(codeReviewLabelAllowedQuery() + ",user=" + userAccount.preferredEmail(), change1);
+    assertQuery(codeReviewLabelAllowedQuery() + ",Administrators", change1);
+    assertQuery(codeReviewLabelAllowedQuery() + ",group=Administrators", change1);
+    assertQuery(codeReviewLabelAllowedQuery() + ",owner", change1);
     assertQuery("label:CodE-RevieW=ok,user1");
     assertQuery("label:CodE-RevieW=need", change2);
     // NEED records don't have associated users.
@@ -4926,7 +4965,7 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     Change.Id id = Change.id(seq.nextChangeId());
     return changeFactory
         .create(id, commit, branch)
-        .setValidate(false)
+        .disableValidation()
         .setStatus(status)
         .setTopic(topic)
         .setWorkInProgress(workInProgress)
@@ -4989,7 +5028,7 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
                 PatchSet.id(c.getId(), c.currentPatchSetId().get() + 1),
                 commit)
             .setFireRevisionCreated(false)
-            .setValidate(false);
+            .disableValidation();
     testRefAction(
         () -> {
           try (BatchUpdate bu = updateFactory.create(c.getProject(), user, TimeUtil.now());
@@ -5052,6 +5091,10 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     input.name = project.get();
     input.parent = parent.get();
     gApi.projects().create(input);
+  }
+
+  protected String codeReviewLabelAllowedQuery() {
+    return "label:CodE-RevieW=may";
   }
 
   protected QueryRequest newQuery(Object query) {
@@ -5256,7 +5299,7 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     }
   }
 
-  private void setRequestContextForUser(Account.Id userId) {
+  protected void setRequestContextForUser(Account.Id userId) {
     @SuppressWarnings("unused")
     var unused = requestContext.setContext(newRequestContext(userId));
   }

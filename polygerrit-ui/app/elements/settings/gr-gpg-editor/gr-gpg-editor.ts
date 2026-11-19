@@ -16,7 +16,7 @@ import {grFormStyles} from '../../../styles/gr-form-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {assertIsDefined} from '../../../utils/common-util';
 import {BindValueChangeEvent} from '../../../types/events';
-import {fire} from '../../../utils/event-util';
+import {fire, fireAlert} from '../../../utils/event-util';
 import {modalStyles} from '../../../styles/gr-modal-styles';
 import {formStyles} from '../../../styles/form-styles';
 
@@ -121,7 +121,7 @@ export class GrGpgEditor extends LitElement {
             >
           </dialog>
           <gr-button @click=${this.save} ?disabled=${!this.hasUnsavedChanges}
-            >Save changes</gr-button
+            >Save Changes</gr-button
           >
         </fieldset>
         <fieldset>
@@ -142,7 +142,7 @@ export class GrGpgEditor extends LitElement {
             id="addButton"
             ?disabled=${!this.newKey?.length}
             @click=${this.handleAddKey}
-            >Add new GPG key</gr-button
+            >Add New GPG Key</gr-button
           >
         </fieldset>
       </div>
@@ -156,7 +156,7 @@ export class GrGpgEditor extends LitElement {
       <td class="userIdHeader">${key.user_ids?.map(id => html`${id}`)}</td>
       <td class="keyHeader">
         <gr-button @click=${() => this.showKey(key)} link=""
-          >Click to View</gr-button
+          >Click To View</gr-button
         >
       </td>
       <td>
@@ -233,11 +233,12 @@ export class GrGpgEditor extends LitElement {
         this.newKey = '';
         this.loadData();
       })
-      .catch(() => {
+      .catch((err: Error) => {
         assertIsDefined(this.newKeyTextarea);
         assertIsDefined(this.addButton);
         this.addButton.disabled = false;
         this.newKeyTextarea.disabled = false;
+        fireAlert(this, err.message);
       });
   }
 

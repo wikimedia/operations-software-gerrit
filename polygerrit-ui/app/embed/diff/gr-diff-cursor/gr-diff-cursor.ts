@@ -7,6 +7,7 @@ import {Subscription} from 'rxjs';
 import {AbortStop, CursorMoveResult, Stop} from '../../../api/core';
 import {
   DiffViewMode,
+  FileRangeSelection,
   GrDiffCursor as GrDiffCursorApi,
   GrDiffLineType,
   LineNumber,
@@ -50,6 +51,7 @@ export function fromRowToChunk(
 /** A subset of the GrDiff API that the cursor is using. */
 export interface GrDiffCursorable extends HTMLElement {
   isRangeSelected(): boolean;
+  getSelectedRange(): FileRangeSelection | undefined;
   createRangeComment(): void;
   getCursorStops(): Stop[];
   path?: string;
@@ -354,9 +356,7 @@ export class GrDiffCursor implements GrDiffCursorApi {
   };
 
   createCommentInPlace() {
-    const diffWithRangeSelected = this.diffs.find(diff =>
-      diff.isRangeSelected()
-    );
+    const diffWithRangeSelected = this.getSelectedDiff();
     if (diffWithRangeSelected) {
       diffWithRangeSelected.createRangeComment();
     } else {
@@ -367,6 +367,18 @@ export class GrDiffCursor implements GrDiffCursorApi {
         diff.addDraftAtLine(lineNumber, this.side);
       }
     }
+  }
+
+  getSelectedDiff() {
+    return this.diffs.find(diff => diff.isRangeSelected());
+  }
+
+  getSelectedRange() {
+    const diffWithRangeSelected = this.getSelectedDiff();
+    if (diffWithRangeSelected) {
+      return diffWithRangeSelected.getSelectedRange();
+    }
+    return undefined;
   }
 
   private getViewMode() {

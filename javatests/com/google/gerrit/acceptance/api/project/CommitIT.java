@@ -16,18 +16,26 @@ package com.google.gerrit.acceptance.api.project;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.gerrit.acceptance.GitUtil.pushHead;
+import static com.google.gerrit.acceptance.PushOneCommit.FILE_NAME;
+import static com.google.gerrit.acceptance.PushOneCommit.SUBJECT;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
+import static com.google.gerrit.extensions.client.ListChangesOption.CURRENT_COMMIT;
+import static com.google.gerrit.extensions.client.ListChangesOption.CURRENT_REVISION;
+import static com.google.gerrit.git.ObjectIds.abbreviateName;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.stream.Collectors.toList;
+import static org.eclipse.jgit.lib.Constants.HEAD;
 import static org.eclipse.jgit.lib.Constants.R_TAGS;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.common.truth.Correspondence;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
-import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.PushOneCommit.Result;
+import com.google.gerrit.acceptance.RestResponse;
 import com.google.gerrit.acceptance.TestAccount;
 import com.google.gerrit.acceptance.testsuite.account.AccountOperations;
 import com.google.gerrit.acceptance.testsuite.change.ChangeOperations;
@@ -51,8 +59,11 @@ import com.google.gerrit.extensions.common.CommitMessageInput;
 import com.google.gerrit.extensions.common.GitPerson;
 import com.google.gerrit.extensions.common.RevisionInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
+import com.google.gerrit.extensions.restapi.BinaryResult;
+import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.truth.NullAwareCorrespondence;
 import com.google.inject.Inject;
+import java.io.ByteArrayOutputStream;
 import java.util.Iterator;
 import java.util.List;
 import org.eclipse.jgit.junit.TestRepository;
@@ -61,7 +72,6 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.junit.Test;
 
-@NoHttpd
 public class CommitIT extends AbstractDaemonTest {
   @Inject private ProjectOperations projectOperations;
   @Inject private AccountOperations accountOperations;
@@ -164,6 +174,39 @@ public class CommitIT extends AbstractDaemonTest {
         .add(block(Permission.READ).ref("refs/heads/test-branch-1").group(REGISTERED_USERS))
         .update();
     assertThat(getIncludedIn(baseChange.getCommit().getId()).tags).containsExactly(tagBase);
+  }
+
+  @Test
+  public void cherryPickWithoutConflicts() throws Exception {
+    String destBranch = "foo";
+    createBranch(BranchNameKey.create(project, destBranch));
+
+    // Create change to cherry-pick
+    PushOneCommit.Result r = createChange();
+    RevCommit commitToCherryPick = r.getCommit();
+
+    // Cherry-pick to foo branch
+    CherryPickInput input = new CherryPickInput();
+    input.destination = destBranch;
+    ChangeInfo cherryPickResult =
+        gApi.projects()
+            .name(project.get())
+            .commit(commitToCherryPick.name())
+            .cherryPick(input)
+            .get();
+
+    // Verify the conflicts information
+    RevCommit head = projectOperations.project(project).getHead(cherryPickResult.branch);
+    RevisionInfo currentRevision =
+        gApi.changes()
+            .id(cherryPickResult.id)
+            .get(CURRENT_REVISION, CURRENT_COMMIT)
+            .getCurrentRevision();
+    assertThat(currentRevision.commit.parents.get(0).commit).isEqualTo(head.name());
+    assertThat(currentRevision.conflicts).isNotNull();
+    assertThat(currentRevision.conflicts.ours).isEqualTo(head.getName());
+    assertThat(currentRevision.conflicts.theirs).isEqualTo(r.getCommit().name());
+    assertThat(currentRevision.conflicts.containsConflicts).isFalse();
   }
 
   @Test
@@ -272,6 +315,197 @@ public class CommitIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void cherryPickWithAllowConflicts() throws Exception {
+    ObjectId initial = repo().exactRef(HEAD).getLeaf().getObjectId();
+
+    // Create a branch and push a commit to it (by-passing review)
+    String destBranch = "foo";
+    createBranch(BranchNameKey.create(project, destBranch));
+    String destContent = "some content";
+    PushOneCommit push =
+        pushFactory.create(
+            admin.newIdent(),
+            testRepo,
+            PushOneCommit.SUBJECT,
+            ImmutableMap.of(PushOneCommit.FILE_NAME, destContent, "foo.txt", "foo"));
+    push.to("refs/heads/" + destBranch);
+
+    // Create a change on master with a commit that conflicts with the commit on the other branch.
+    testRepo.reset(initial);
+    String changeContent = "another content";
+    push =
+        pushFactory.create(
+            admin.newIdent(),
+            testRepo,
+            PushOneCommit.SUBJECT,
+            ImmutableMap.of(PushOneCommit.FILE_NAME, changeContent, "bar.txt", "bar"));
+    PushOneCommit.Result r = push.to("refs/for/master");
+    RevCommit commitToCherryPick = r.getCommit();
+
+    // Cherry-pick the commit to the other branch, that should fail with a conflict.
+    CherryPickInput input = new CherryPickInput();
+    input.destination = destBranch;
+    ResourceConflictException thrown =
+        assertThrows(
+            ResourceConflictException.class,
+            () ->
+                gApi.projects()
+                    .name(project.get())
+                    .commit(commitToCherryPick.name())
+                    .cherryPick(input));
+    assertThat(thrown).hasMessageThat().startsWith("Cherry pick failed: merge conflict");
+
+    // Cherry-pick with auto merge should succeed.
+    // We make a REST call here, rather than using CommitApi.cherryPick(CherryPickInput) because we
+    // want to validate transient fields of the returned ChangeInfo and
+    // CommitApi.cherryPick(CherryPickInput) doesn't return the ChangeInfo, but a ChangeApi.
+    // ChangeApi allows us to retrieve the ChangeInfo, but this is a new ChangeInfo instance that
+    // doesn't have transient fields like 'containsGitConflicts' set. Hence since we do want to
+    // verify the transient fields, we do a REST call instead, where we can get the returned
+    // ChangeInfo and verify the transient fields in it.
+    input.allowConflicts = true;
+    RestResponse response =
+        adminRestSession.post(
+            "/projects/" + project.get() + "/commits/" + commitToCherryPick.name() + "/cherrypick",
+            input);
+    response.assertOK();
+    ChangeInfo cherryPickChange = newGson().fromJson(response.getReader(), ChangeInfo.class);
+    assertThat(cherryPickChange.containsGitConflicts).isTrue();
+    assertThat(cherryPickChange.workInProgress).isTrue();
+
+    // Verify the conflicts information
+    RevCommit head = projectOperations.project(project).getHead(cherryPickChange.branch);
+    RevisionInfo currentRevision =
+        gApi.changes()
+            .id(cherryPickChange.id)
+            .get(CURRENT_REVISION, CURRENT_COMMIT)
+            .getCurrentRevision();
+    assertThat(currentRevision.commit.parents.get(0).commit).isEqualTo(head.name());
+    assertThat(currentRevision.conflicts).isNotNull();
+    assertThat(currentRevision.conflicts.ours).isEqualTo(head.getName());
+    assertThat(currentRevision.conflicts.theirs).isEqualTo(r.getCommit().name());
+    assertThat(currentRevision.conflicts.containsConflicts).isTrue();
+
+    // Verify that the file content in the cherry-pick change is correct.
+    // We expect that it has conflict markers to indicate the conflict.
+    BinaryResult bin =
+        gApi.changes()
+            .id(project.get(), cherryPickChange._number)
+            .current()
+            .file(PushOneCommit.FILE_NAME)
+            .content();
+    ByteArrayOutputStream os = new ByteArrayOutputStream();
+    bin.writeTo(os);
+    String fileContent = new String(os.toByteArray(), UTF_8);
+    String destSha1 = abbreviateName(projectOperations.project(project).getHead(destBranch), 6);
+    String changeSha1 = abbreviateName(r.getCommit(), 6);
+    assertThat(fileContent)
+        .isEqualTo(
+            "<<<<<<< HEAD   ("
+                + destSha1
+                + " test commit)\n"
+                + destContent
+                + "\n"
+                + "=======\n"
+                + changeContent
+                + "\n"
+                + ">>>>>>> CHANGE ("
+                + changeSha1
+                + " test commit)\n");
+  }
+
+  @Test
+  public void cherryPickToExistingChangeWithAllowConflicts() throws Exception {
+    String tip = testRepo.getRepository().exactRef("HEAD").getObjectId().name();
+
+    String destBranch = "foo";
+    createBranch(BranchNameKey.create(project, destBranch));
+    String destContent = "some content";
+    PushOneCommit.Result existingChange =
+        createChange(testRepo, destBranch, SUBJECT, FILE_NAME, destContent, null);
+
+    testRepo.reset(tip);
+    String changeContent = "another content";
+    PushOneCommit.Result srcChange =
+        createChange(testRepo, "master", SUBJECT, FILE_NAME, changeContent, null);
+    RevCommit commitToCherryPick = srcChange.getCommit();
+
+    // Cherry-pick the commit to the other branch, that should fail with a conflict.
+    CherryPickInput input = new CherryPickInput();
+    input.destination = destBranch;
+    input.base = existingChange.getCommit().name();
+    input.message = "cherry-pick to foo" + "\n\nChange-Id: " + existingChange.getChangeId();
+    input.destination = destBranch;
+    ResourceConflictException thrown =
+        assertThrows(
+            ResourceConflictException.class,
+            () ->
+                gApi.projects()
+                    .name(project.get())
+                    .commit(commitToCherryPick.name())
+                    .cherryPick(input));
+    assertThat(thrown).hasMessageThat().startsWith("Cherry pick failed: merge conflict");
+
+    // Cherry-pick with auto merge should succeed.
+    // We make a REST call here, rather than using CommitApi.cherryPick(CherryPickInput) because we
+    // want to validate transient fields of the returned ChangeInfo and
+    // CommitApi.cherryPick(CherryPickInput) doesn't return the ChangeInfo, but a ChangeApi.
+    // ChangeApi allows us to retrieve the ChangeInfo, but this is a new ChangeInfo instance that
+    // doesn't have transient fields like 'containsGitConflicts' set. Hence since we do want to
+    // verify the transient fields, we do a REST call instead, where we can get the returned
+    // ChangeInfo and verify the transient fields in it.
+    input.allowConflicts = true;
+    RestResponse response =
+        adminRestSession.post(
+            "/projects/" + project.get() + "/commits/" + commitToCherryPick.name() + "/cherrypick",
+            input);
+    response.assertOK();
+    ChangeInfo cherryPickChange = newGson().fromJson(response.getReader(), ChangeInfo.class);
+    assertThat(cherryPickChange.containsGitConflicts).isTrue();
+    assertThat(cherryPickChange.workInProgress).isTrue();
+
+    // Verify the conflicts information
+    RevisionInfo currentRevision =
+        gApi.changes()
+            .id(cherryPickChange.id)
+            .get(CURRENT_REVISION, CURRENT_COMMIT)
+            .getCurrentRevision();
+    assertThat(currentRevision.commit.parents.get(0).commit)
+        .isEqualTo(existingChange.getCommit().name());
+    assertThat(currentRevision.conflicts).isNotNull();
+    assertThat(currentRevision.conflicts.ours).isEqualTo(existingChange.getCommit().name());
+    assertThat(currentRevision.conflicts.theirs).isEqualTo(srcChange.getCommit().name());
+    assertThat(currentRevision.conflicts.containsConflicts).isTrue();
+
+    // Verify that the file content in the cherry-pick change is correct.
+    // We expect that it has conflict markers to indicate the conflict.
+    BinaryResult bin =
+        gApi.changes()
+            .id(project.get(), cherryPickChange._number)
+            .current()
+            .file(PushOneCommit.FILE_NAME)
+            .content();
+    ByteArrayOutputStream os = new ByteArrayOutputStream();
+    bin.writeTo(os);
+    String fileContent = new String(os.toByteArray(), UTF_8);
+    String destSha1 = abbreviateName(existingChange.getCommit(), 6);
+    String changeSha1 = abbreviateName(srcChange.getCommit(), 6);
+    assertThat(fileContent)
+        .isEqualTo(
+            "<<<<<<< HEAD   ("
+                + destSha1
+                + " test commit)\n"
+                + destContent
+                + "\n"
+                + "=======\n"
+                + changeContent
+                + "\n"
+                + ">>>>>>> CHANGE ("
+                + changeSha1
+                + " test commit)\n");
+  }
+
+  @Test
   public void cherryPickCommitWithoutChangeIdCreateNewChange() throws Exception {
     String destBranch = "foo";
     createBranch(BranchNameKey.create(project, destBranch));
@@ -366,7 +600,6 @@ public class CommitIT extends AbstractDaemonTest {
                 + "Change-Id: Ideadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n\n"
                 + "Change-Id: %s\n",
             existingDestChange.changeId);
-    input.allowConflicts = true;
     input.allowEmpty = true;
 
     ChangeInfo cherryPickResult =
@@ -407,7 +640,6 @@ public class CommitIT extends AbstractDaemonTest {
     input.destination = destBranch;
     input.message =
         String.format("it goes to foo branch\n\nChange-Id: %s\n", existingDestChange.changeId);
-    input.allowConflicts = true;
     input.allowEmpty = true;
     // Use RevisionAPI to submit initial cherryPick.
     ChangeInfo cherryPickResult =
@@ -459,7 +691,6 @@ public class CommitIT extends AbstractDaemonTest {
     input.destination = destBranch;
     input.message =
         String.format("it goes to foo branch\n\nChange-Id: %s\n", existingDestChange.changeId);
-    input.allowConflicts = true;
     input.allowEmpty = true;
 
     BadRequestException thrown =

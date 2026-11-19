@@ -101,7 +101,10 @@ public class SubmitRequirementsAdapter {
         }
       }
     }
-    return result.build();
+    ImmutableMap<SubmitRequirement, SubmitRequirementResult> legacySubmitRequirements =
+        result.build();
+    logger.atFine().log("Legacy submit requirements: %s", legacySubmitRequirements);
+    return legacySubmitRequirements;
   }
 
   @VisibleForTesting
@@ -246,18 +249,11 @@ public class SubmitRequirementsAdapter {
   }
 
   private static Status mapStatus(Label label) {
-    SubmitRequirementExpressionResult.Status status = Status.PASS;
-    switch (label.status) {
-      case OK:
-      case MAY:
-        status = Status.PASS;
-        break;
-      case REJECT:
-      case NEED:
-      case IMPOSSIBLE:
-        status = Status.FAIL;
-        break;
-    }
+    SubmitRequirementExpressionResult.Status status =
+        switch (label.status) {
+          case OK, MAY -> Status.PASS;
+          case REJECT, NEED, IMPOSSIBLE -> Status.FAIL;
+        };
     return status;
   }
 
@@ -294,6 +290,7 @@ public class SubmitRequirementsAdapter {
         status,
         status == Status.PASS ? atoms : ImmutableList.of(),
         status == Status.FAIL ? atoms : ImmutableList.of(),
+        Optional.empty(),
         Optional.ofNullable(Strings.emptyToNull(errorMessage)));
   }
 

@@ -341,7 +341,14 @@ public class GitFileDiffCacheImpl implements GitFileDiffCache {
         DiffEntry diffEntry, GitFileDiffCacheKey key, CloseablePool<DiffFormatter> diffPool)
         throws IOException {
       if (!key.useTimeout()) {
-        try (CloseablePool<DiffFormatter>.Handle formatter = diffPool.get()) {
+        try (CloseablePool<DiffFormatter>.Handle formatter = diffPool.get();
+            TraceTimer timer =
+                TraceContext.newTimer(
+                    "Computing git file diff without timeout",
+                    Metadata.builder()
+                        .diffAlgorithm(key.diffAlgorithm().name())
+                        .filePath(key.newFilePath())
+                        .build())) {
           return GitFileDiff.create(diffEntry, getFileHeader(formatter, diffEntry));
         }
       }
@@ -357,13 +364,24 @@ public class GitFileDiffCacheImpl implements GitFileDiffCache {
                   return GitFileDiff.create(diffEntry, getFileHeader(formatter, diffEntry));
                 }
               });
-      try {
+      try (TraceTimer timer =
+          TraceContext.newTimer(
+              "Computing git file diff with timeout",
+              Metadata.builder()
+                  .diffAlgorithm(key.diffAlgorithm().name())
+                  .filePath(key.newFilePath())
+                  .build())) {
         // We employ the timeout because of a bug in Myers diff in JGit. See
         // https://issues.gerritcodereview.com/issues/40000618 for more details. The bug may happen
         // if the algorithm used in diffs is HISTOGRAM_WITH_FALLBACK_MYERS.
         return fileDiffFuture.get(timeoutMillis, TimeUnit.MILLISECONDS);
       } catch (InterruptedException | TimeoutException e) {
+        fileDiffFuture.cancel(true);
         // If timeout happens, create a negative result
+        logger.atFine().log(
+            "computing git file diff for %s with %s as diff algorithm failed with a timeout,"
+                + " returning a negative git file diff",
+            key.newFilePath(), key.diffAlgorithm());
         metrics.timeouts.increment();
         return GitFileDiff.createNegative(
             AbbreviatedObjectId.fromObjectId(key.oldTree()),
@@ -405,23 +423,20 @@ public class GitFileDiffCacheImpl implements GitFileDiffCache {
       buf.append(diffEntry.getChangeType());
       buf.append(" ");
       switch (diffEntry.getChangeType()) {
-        case ADD:
-          buf.append(String.format("%s (%s)", diffEntry.getNewPath(), diffEntry.getNewId().name()));
-          break;
-        case COPY:
-        case RENAME:
-          buf.append(
-              String.format(
-                  "%s (%s) -> %s (%s)",
-                  diffEntry.getOldPath(),
-                  diffEntry.getOldId().name(),
-                  diffEntry.getNewPath(),
-                  diffEntry.getNewId().name()));
-          break;
-        case DELETE:
-        case MODIFY:
-          buf.append(String.format("%s (%s)", diffEntry.getOldPath(), diffEntry.getOldId().name()));
-          break;
+        case ADD ->
+            buf.append(
+                String.format("%s (%s)", diffEntry.getNewPath(), diffEntry.getNewId().name()));
+        case COPY, RENAME ->
+            buf.append(
+                String.format(
+                    "%s (%s) -> %s (%s)",
+                    diffEntry.getOldPath(),
+                    diffEntry.getOldId().name(),
+                    diffEntry.getNewPath(),
+                    diffEntry.getNewId().name()));
+        case DELETE, MODIFY ->
+            buf.append(
+                String.format("%s (%s)", diffEntry.getOldPath(), diffEntry.getOldId().name()));
       }
       buf.append("]");
       return buf.toString();

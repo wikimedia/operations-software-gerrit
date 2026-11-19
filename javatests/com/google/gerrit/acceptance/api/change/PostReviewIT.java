@@ -53,12 +53,14 @@ import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.extensions.annotations.Exports;
 import com.google.gerrit.extensions.api.changes.DraftInput;
+import com.google.gerrit.extensions.api.changes.RevertInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput.CommentInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput.DraftHandling;
 import com.google.gerrit.extensions.api.changes.ReviewInput.RobotCommentInput;
 import com.google.gerrit.extensions.api.changes.ReviewResult;
 import com.google.gerrit.extensions.api.changes.ReviewerInput;
+import com.google.gerrit.extensions.client.ChangeStatus;
 import com.google.gerrit.extensions.client.ListChangesOption;
 import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.client.Side;
@@ -783,6 +785,30 @@ public class PostReviewIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void changeInfoStatusReflectsSynchronousSubmitByCommentAddedListener() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    CommentAddedListener submittingListener =
+        event -> {
+          try {
+            gApi.changes()
+                .id(event.getChange().project, event.getChange()._number)
+                .current()
+                .submit();
+          } catch (RestApiException e) {
+            throw new RuntimeException(e);
+          }
+        };
+
+    try (Registration registration = extensionRegistry.newRegistration().add(submittingListener)) {
+      ReviewResult reviewResult =
+          gApi.changes().id(r.getChangeId()).current().review(ReviewInput.approve());
+
+      assertThat(reviewResult.changeInfo.status).isEqualTo(ChangeStatus.MERGED);
+    }
+  }
+
+  @Test
   public void submitRulesAreInvokedOnlyOnce() throws Exception {
     PushOneCommit.Result r = createChange();
 
@@ -1134,6 +1160,34 @@ public class PostReviewIT extends AbstractDaemonTest {
     Collection<ChangeMessageInfo> messages = gApi.changes().id(r.getChangeId()).get().messages;
     assertThat(Iterables.getLast(messages).message)
         .isEqualTo(String.format("Patch Set 1: Code-Review+2 Verified+1"));
+  }
+
+  @Test
+  public void setReadyForReviewSendsNotificationsForRevertedChange() throws Exception {
+    PushOneCommit.Result r = createChange();
+    gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).review(ReviewInput.approve());
+    gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).submit();
+    RevertInput in = new RevertInput();
+    in.workInProgress = true;
+    String changeId = gApi.changes().id(r.getChangeId()).revert(in).get().changeId;
+    requestScopeOperations.setApiUser(admin.id());
+    assertThat(gApi.changes().id(changeId).get().workInProgress).isTrue();
+
+    ReviewResult reviewResult =
+        gApi.changes().id(changeId).current().review(ReviewInput.create().setReady(true));
+    assertThat(reviewResult.ready).isTrue();
+
+    assertThat(gApi.changes().id(changeId).get().workInProgress).isNull();
+    // expected messages on source change:
+    // 1. Uploaded patch set 1.
+    // 2. Patch Set 1: Code-Review+2
+    // 3. Change has been successfully merged by Administrator
+    // 4. Patch Set 1: Reverted
+    List<ChangeMessageInfo> sourceMessages =
+        new ArrayList<>(gApi.changes().id(r.getChangeId()).get().messages);
+    assertThat(sourceMessages).hasSize(4);
+    String expectedMessage = String.format("Created a revert of this change as %s", changeId);
+    assertThat(sourceMessages.get(3).message).isEqualTo(expectedMessage);
   }
 
   private static class TestListener implements CommentAddedListener {

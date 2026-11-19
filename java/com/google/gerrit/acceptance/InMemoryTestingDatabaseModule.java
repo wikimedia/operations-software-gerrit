@@ -37,6 +37,7 @@ import com.google.gerrit.server.config.TrackingFootersProvider;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.schema.SchemaCreator;
 import com.google.gerrit.server.schema.SchemaModule;
+import com.google.gerrit.testing.InMemoryRepositoryCountingManager;
 import com.google.gerrit.testing.InMemoryRepositoryManager;
 import com.google.inject.Inject;
 import com.google.inject.ProvisionException;
@@ -70,7 +71,7 @@ class InMemoryTestingDatabaseModule extends LifecycleModule {
     if (repoManager != null) {
       bind(GitRepositoryManager.class).toInstance(repoManager);
     } else {
-      bind(GitRepositoryManager.class).to(InMemoryRepositoryManager.class);
+      bind(GitRepositoryManager.class).to(InMemoryRepositoryCountingManager.class).in(SINGLETON);
       bind(InMemoryRepositoryManager.class).in(SINGLETON);
     }
 

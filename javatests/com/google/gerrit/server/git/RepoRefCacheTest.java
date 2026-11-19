@@ -197,6 +197,12 @@ public class RepoRefCacheTest {
         }
 
         @Override
+        public ReflogReader getReflogReader(Ref ref) throws IOException {
+          checkIsOpen();
+          return refDatabase.getReflogReader(ref);
+        }
+
+        @Override
         @Deprecated
         public Map<String, Ref> getRefs(String prefix) throws IOException {
           checkIsOpen();
@@ -259,7 +265,7 @@ public class RepoRefCacheTest {
     @Override
     public ReflogReader getReflogReader(String refName) throws IOException {
       checkIsOpen();
-      return repo.getReflogReader(refName);
+      return repo.getRefDatabase().getReflogReader(refName);
     }
 
     private void checkIsOpen() {

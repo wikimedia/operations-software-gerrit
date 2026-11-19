@@ -143,13 +143,13 @@ public class PatchFile {
    */
   public String getLine(int file, int line) throws IOException, NoSuchEntityException {
     switch (file) {
-      case 0:
+      case 0 -> {
         if (a == null) {
           a = load(aTree, getOldName());
         }
         return a.getString(line - 1);
-
-      case 1:
+      }
+      case 1 -> {
         if (b == null) {
           b =
               load(
@@ -157,14 +157,15 @@ public class PatchFile {
                   FilePathAdapter.getNewPath(diff.oldPath(), diff.newPath(), diff.changeType()));
         }
         return b.getString(line - 1);
-
-      default:
-        throw new NoSuchEntityException();
+      }
+      default -> throw new NoSuchEntityException();
     }
   }
 
   private Text load(ObjectId tree, String path)
-      throws MissingObjectException, IncorrectObjectTypeException, CorruptObjectException,
+      throws MissingObjectException,
+          IncorrectObjectTypeException,
+          CorruptObjectException,
           IOException {
     if (path == null || Patch.PATCHSET_LEVEL.equals(path)) {
       return Text.EMPTY;

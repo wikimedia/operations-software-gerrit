@@ -13,7 +13,6 @@ import {
   PatchSetNumber,
   RepoName,
 } from '../../../types/common';
-import {anyLineTooLong} from '../../../utils/diff-util';
 import {
   DiffLayer,
   DiffPreferencesInfo,
@@ -30,13 +29,15 @@ import {subscribe} from '../../lit/subscription-controller';
 import {DiffPreview} from '../../diff/gr-apply-fix-dialog/gr-apply-fix-dialog';
 import {userModelToken} from '../../../models/user/user-model';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
-import {fire} from '../../../utils/event-util';
+import {fire, fireError} from '../../../utils/event-util';
 import {Timing} from '../../../constants/reporting';
 import {createChangeUrl} from '../../../models/views/change';
 import {getFileExtension} from '../../../utils/file-util';
+import {throwingErrorCallback} from '../gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
+import {ReportSource} from '../../../services/suggestions/suggestions-service';
 
 export interface PreviewLoadedDetail {
-  previewLoadedFor?: string | FixSuggestionInfo;
+  previewLoadedFor?: FixSuggestionInfo;
 }
 /**
  * Diff preview for
@@ -215,9 +216,7 @@ export class GrSuggestionDiffPreview extends LitElement {
   private renderDiff() {
     if (!this.preview) return;
     const diff = this.preview.preview;
-    if (!anyLineTooLong(diff)) {
-      this.syntaxLayer.process(diff);
-    }
+    this.syntaxLayer.process(diff);
     return html`<div class="diff-container">
       <gr-diff
         .prefs=${this.overridePartialDiffPrefs()}
@@ -275,20 +274,36 @@ export class GrSuggestionDiffPreview extends LitElement {
     if (!changeNum || !basePatchNum || !fixSuggestion) return;
 
     this.reporting.time(Timing.APPLY_FIX_LOAD);
-    const res = await this.restApiService.applyFixSuggestion(
-      changeNum,
-      basePatchNum,
-      fixSuggestion.replacements,
-      this.latestPatchNum
-    );
-    this.reporting.timeEnd(Timing.APPLY_FIX_LOAD, {
-      method: '1-click',
-      description: fixSuggestion.description,
-      fileExtension: getFileExtension(
-        fixSuggestion?.replacements?.[0].path ?? ''
-      ),
-      commentId: this.commentId ?? '',
-    });
+    let res: Response | undefined = undefined;
+    let errorText = '';
+    let status = '';
+    try {
+      res = await this.restApiService.applyFixSuggestion(
+        changeNum,
+        basePatchNum,
+        fixSuggestion.replacements,
+        this.latestPatchNum,
+        throwingErrorCallback
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        errorText = error.message;
+        status = errorText.match(/\b\d{3}\b/)?.[0] || '';
+      }
+      fireError(this, `Applying Fix failed.\n${errorText}`);
+    } finally {
+      this.reporting.timeEnd(Timing.APPLY_FIX_LOAD, {
+        method: '1-click',
+        description: fixSuggestion.description,
+        fileExtension: getFileExtension(
+          fixSuggestion?.replacements?.[0].path ?? ''
+        ),
+        commentId: this.commentId ?? '',
+        success: res?.ok ?? false,
+        status: res?.status ?? status,
+        errorText,
+      });
+    }
     if (res?.ok) {
       this.getNavigation().setUrl(
         createChangeUrl({
@@ -300,7 +315,13 @@ export class GrSuggestionDiffPreview extends LitElement {
         })
       );
       fire(this, 'reload-diff', {path: fixSuggestion.replacements[0].path});
-      fire(this, 'apply-user-suggestion', {});
+      fire(this, 'apply-user-suggestion', {
+        fixSuggestion: fixSuggestion.description.includes(
+          ReportSource.GET_AI_FIX_FOR_COMMENT
+        )
+          ? fixSuggestion
+          : undefined,
+      });
     }
   }
 

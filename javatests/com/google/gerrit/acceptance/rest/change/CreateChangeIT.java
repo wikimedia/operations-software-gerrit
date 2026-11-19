@@ -15,6 +15,9 @@
 package com.google.gerrit.acceptance.rest.change;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.acceptance.TestExtensions.TestCommitValidationInfoListener;
+import static com.google.gerrit.acceptance.TestExtensions.TestCommitValidationListener;
+import static com.google.gerrit.acceptance.TestExtensions.TestValidationOptionsListener;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
 import static com.google.gerrit.entities.Permission.CREATE;
@@ -23,6 +26,7 @@ import static com.google.gerrit.entities.RefNames.HEAD;
 import static com.google.gerrit.entities.RefNames.changeMetaRef;
 import static com.google.gerrit.extensions.client.ListChangesOption.ALL_REVISIONS;
 import static com.google.gerrit.extensions.client.ListChangesOption.CURRENT_COMMIT;
+import static com.google.gerrit.extensions.client.ListChangesOption.CURRENT_REVISION;
 import static com.google.gerrit.extensions.common.testing.GitPersonSubject.assertThat;
 import static com.google.gerrit.git.ObjectIds.abbreviateName;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
@@ -49,6 +53,7 @@ import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.entities.converter.ChangeInputProtoConverter;
@@ -72,6 +77,7 @@ import com.google.gerrit.extensions.common.ChangeMessageInfo;
 import com.google.gerrit.extensions.common.DiffInfo;
 import com.google.gerrit.extensions.common.GitPerson;
 import com.google.gerrit.extensions.common.MergeInput;
+import com.google.gerrit.extensions.common.RevisionInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.BinaryResult;
@@ -79,10 +85,7 @@ import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.server.events.CommitReceivedEvent;
-import com.google.gerrit.server.git.validators.CommitValidationException;
-import com.google.gerrit.server.git.validators.CommitValidationListener;
-import com.google.gerrit.server.git.validators.CommitValidationMessage;
+import com.google.gerrit.server.git.validators.CommitValidationInfo;
 import com.google.gerrit.server.patch.ApplyPatchUtil;
 import com.google.gerrit.server.restapi.change.CreateChange;
 import com.google.gerrit.server.restapi.change.CreateChange.CommitTreeSupplier;
@@ -99,7 +102,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
@@ -220,6 +222,13 @@ public class CreateChangeIT extends AbstractDaemonTest {
     List<ChangeMessageInfo> messages = gApi.changes().id(info._number).messages();
     assertThat(messages).hasSize(1);
     assertThat(Iterables.getOnlyElement(messages).message).isEqualTo("Uploaded patch set 1.");
+
+    RevisionInfo currentRevision =
+        gApi.changes().id(info.id).get(CURRENT_REVISION, CURRENT_COMMIT).getCurrentRevision();
+    assertThat(currentRevision.conflicts).isNotNull();
+    assertThat(currentRevision.conflicts.containsConflicts).isFalse();
+    assertThat(currentRevision.conflicts.ours).isNull();
+    assertThat(currentRevision.conflicts.theirs).isNull();
   }
 
   @Test
@@ -535,7 +544,8 @@ public class CreateChangeIT extends AbstractDaemonTest {
         targetSubject,
         fileName,
         targetContent);
-    ChangeInput input = newMergeChangeInput(targetBranch, sourceBranch, "", true);
+    ChangeInput input =
+        newMergeChangeInput(targetBranch, sourceBranch, "", /* allowConflicts= */ true);
     input.workInProgress = true;
     input.author = new AccountInput();
     input.author.email = user.email();
@@ -684,14 +694,29 @@ public class CreateChangeIT extends AbstractDaemonTest {
 
   @Test
   public void createMergeChange() throws Exception {
-    changeInTwoBranches("branchA", "a.txt", "branchB", "b.txt");
-    ChangeInput in = newMergeChangeInput("branchA", "branchB", "");
+    String sourceBranch = "sourceBranch";
+    String targetBranch = "targetBranch";
+    ImmutableMap<String, Result> results =
+        changeInTwoBranches(sourceBranch, "a.txt", targetBranch, "b.txt");
+    ChangeInput in = newMergeChangeInput(targetBranch, sourceBranch, "");
     ChangeInfo change = assertCreateSucceeds(in);
 
     // Verify the message that has been posted on the change.
     List<ChangeMessageInfo> messages = gApi.changes().id(change._number).messages();
     assertThat(messages).hasSize(1);
     assertThat(Iterables.getOnlyElement(messages).message).isEqualTo("Uploaded patch set 1.");
+
+    // Verify the conflicts information
+    RevisionInfo currentRevision =
+        gApi.changes().id(change.id).get(CURRENT_REVISION, CURRENT_COMMIT).getCurrentRevision();
+    assertThat(currentRevision.commit.parents.get(0).commit)
+        .isEqualTo(results.get(targetBranch).getCommit().name());
+    assertThat(currentRevision.conflicts).isNotNull();
+    assertThat(currentRevision.conflicts.ours)
+        .isEqualTo(results.get(targetBranch).getCommit().name());
+    assertThat(currentRevision.conflicts.theirs)
+        .isEqualTo(results.get(sourceBranch).getCommit().name());
+    assertThat(currentRevision.conflicts.containsConflicts).isFalse();
   }
 
   @Test
@@ -719,9 +744,24 @@ public class CreateChangeIT extends AbstractDaemonTest {
 
   @Test
   public void createMergeChange_Conflicts_Ours() throws Exception {
-    changeInTwoBranches("branchA", "shared.txt", "branchB", "shared.txt");
-    ChangeInput in = newMergeChangeInput("branchA", "branchB", "ours");
-    assertCreateSucceeds(in);
+    String sourceBranch = "sourceBranch";
+    String targetBranch = "targetBranch";
+    ImmutableMap<String, Result> results =
+        changeInTwoBranches(sourceBranch, "shared.txt", targetBranch, "shared.txt");
+    ChangeInput in = newMergeChangeInput(targetBranch, sourceBranch, "ours");
+    ChangeInfo change = assertCreateSucceeds(in);
+
+    // Verify the conflicts information
+    RevisionInfo currentRevision =
+        gApi.changes().id(change.id).get(CURRENT_REVISION, CURRENT_COMMIT).getCurrentRevision();
+    assertThat(currentRevision.commit.parents.get(0).commit)
+        .isEqualTo(results.get(targetBranch).getCommit().name());
+    assertThat(currentRevision.conflicts).isNotNull();
+    assertThat(currentRevision.conflicts.ours)
+        .isEqualTo(results.get(targetBranch).getCommit().name());
+    assertThat(currentRevision.conflicts.theirs)
+        .isEqualTo(results.get(sourceBranch).getCommit().name());
+    assertThat(currentRevision.conflicts.containsConflicts).isFalse();
   }
 
   @Test
@@ -733,17 +773,31 @@ public class CreateChangeIT extends AbstractDaemonTest {
     String targetBranch = "targetBranch";
     String targetSubject = "target change";
     String targetContent = "target content";
-    changeInTwoBranches(
-        sourceBranch,
-        sourceSubject,
-        fileName,
-        sourceContent,
-        targetBranch,
-        targetSubject,
-        fileName,
-        targetContent);
-    ChangeInput in = newMergeChangeInput(targetBranch, sourceBranch, "", true);
+    ImmutableMap<String, Result> results =
+        changeInTwoBranches(
+            sourceBranch,
+            sourceSubject,
+            fileName,
+            sourceContent,
+            targetBranch,
+            targetSubject,
+            fileName,
+            targetContent);
+    ChangeInput in =
+        newMergeChangeInput(targetBranch, sourceBranch, "", /* allowConflicts= */ true);
     ChangeInfo change = assertCreateSucceedsWithConflicts(in);
+
+    // Verify the conflicts information
+    RevisionInfo currentRevision =
+        gApi.changes().id(change.id).get(CURRENT_REVISION, CURRENT_COMMIT).getCurrentRevision();
+    assertThat(currentRevision.commit.parents.get(0).commit)
+        .isEqualTo(results.get(targetBranch).getCommit().name());
+    assertThat(currentRevision.conflicts).isNotNull();
+    assertThat(currentRevision.conflicts.ours)
+        .isEqualTo(results.get(targetBranch).getCommit().name());
+    assertThat(currentRevision.conflicts.theirs)
+        .isEqualTo(results.get(sourceBranch).getCommit().name());
+    assertThat(currentRevision.conflicts.containsConflicts).isTrue();
 
     // Verify that the file content in the created change is correct.
     // We expect that it has conflict markers to indicate the conflict.
@@ -798,7 +852,8 @@ public class CreateChangeIT extends AbstractDaemonTest {
         fileName,
         "target content");
     String mergeStrategy = "simple-two-way-in-core";
-    ChangeInput in = newMergeChangeInput(targetBranch, sourceBranch, mergeStrategy, true);
+    ChangeInput in =
+        newMergeChangeInput(targetBranch, sourceBranch, mergeStrategy, /* allowConflicts= */ true);
     assertCreateFails(
         in,
         BadRequestException.class,
@@ -1243,8 +1298,7 @@ public class CreateChangeIT extends AbstractDaemonTest {
   @Test
   @UseSystemTime
   public void sha1sOfTwoNewChangesDifferIfCreatedConcurrently() throws Exception {
-    ExecutorService executor = Executors.newFixedThreadPool(2);
-    try {
+    try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       for (int i = 0; i < 10; i++) {
         ChangeInput changeInput = newChangeInput(ChangeStatus.NEW);
 
@@ -1261,9 +1315,6 @@ public class CreateChangeIT extends AbstractDaemonTest {
         assertThat(changeInfo1.get().currentRevision)
             .isNotEqualTo(changeInfo2.get().currentRevision);
       }
-    } finally {
-      executor.shutdown();
-      executor.awaitTermination(5, TimeUnit.SECONDS);
     }
   }
 
@@ -1373,11 +1424,54 @@ public class CreateChangeIT extends AbstractDaemonTest {
     changeInput.validationOptions = ImmutableMap.of("key", "value");
 
     TestCommitValidationListener testCommitValidationListener = new TestCommitValidationListener();
+    TestValidationOptionsListener testValidationOptionsListener =
+        new TestValidationOptionsListener();
     try (Registration registration =
-        extensionRegistry.newRegistration().add(testCommitValidationListener)) {
+        extensionRegistry
+            .newRegistration()
+            .add(testCommitValidationListener)
+            .add(testValidationOptionsListener)) {
       assertCreateSucceeds(changeInput);
       assertThat(testCommitValidationListener.receiveEvent.pushOptions)
           .containsExactly("key", "value");
+      assertThat(testValidationOptionsListener.validationOptions).containsExactly("key", "value");
+    }
+  }
+
+  @Test
+  public void commitValidationInfoListenerIsInvokedOnChangeCreation() throws Exception {
+    ChangeInput changeInput = new ChangeInput();
+    changeInput.project = project.get();
+    changeInput.branch = "master";
+    changeInput.subject = "A change";
+    changeInput.status = ChangeStatus.NEW;
+    changeInput.validationOptions = ImmutableMap.of("key", "value");
+
+    TestCommitValidationInfoListener testCommitValidationInfoListener =
+        new TestCommitValidationInfoListener();
+    TestCommitValidationListener testCommitValidationListener = new TestCommitValidationListener();
+    try (Registration registration =
+        extensionRegistry
+            .newRegistration()
+            .add(testCommitValidationInfoListener)
+            .add(testCommitValidationListener)) {
+      ChangeInfo changeInfo = assertCreateSucceeds(changeInput);
+      assertThat(testCommitValidationInfoListener.validationInfoByValidator)
+          .containsKey(TestCommitValidationListener.class.getName());
+      assertThat(
+              testCommitValidationInfoListener
+                  .validationInfoByValidator
+                  .get(TestCommitValidationListener.class.getName())
+                  .status())
+          .isEqualTo(CommitValidationInfo.Status.PASSED);
+      assertThat(testCommitValidationInfoListener.receiveEvent.commit.name())
+          .isEqualTo(changeInfo.currentRevision);
+      assertThat(testCommitValidationInfoListener.receiveEvent.pushOptions)
+          .containsExactly("key", "value");
+      assertThat(testCommitValidationInfoListener.patchSetId)
+          .isEqualTo(PatchSet.id(Change.id(changeInfo._number), changeInfo.currentRevisionNumber));
+      assertThat(testCommitValidationInfoListener.hasChangeModificationRefContext).isTrue();
+      assertThat(testCommitValidationInfoListener.hasDirectPushRefContext).isFalse();
     }
   }
 
@@ -1513,7 +1607,7 @@ public class CreateChangeIT extends AbstractDaemonTest {
   }
 
   private ChangeInput newMergeChangeInput(String targetBranch, String sourceRef, String strategy) {
-    return newMergeChangeInput(targetBranch, sourceRef, strategy, false);
+    return newMergeChangeInput(targetBranch, sourceRef, strategy, /* allowConflicts= */ false);
   }
 
   private ChangeInput newMergeChangeInput(
@@ -1611,16 +1705,5 @@ public class CreateChangeIT extends AbstractDaemonTest {
     changeB.assertOkStatus();
 
     return ImmutableMap.of("master", initialCommit, branchA, changeA, branchB, changeB);
-  }
-
-  private static class TestCommitValidationListener implements CommitValidationListener {
-    public CommitReceivedEvent receiveEvent;
-
-    @Override
-    public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent receiveEvent)
-        throws CommitValidationException {
-      this.receiveEvent = receiveEvent;
-      return ImmutableList.of();
-    }
   }
 }

@@ -353,6 +353,7 @@ export declare interface ChangeConfigInfo {
   disable_private_changes?: boolean;
   mergeability_computation_behavior: MergeabilityComputationBehavior;
   conflicts_predicate_enabled?: boolean;
+  enable_robot_comments?: boolean;
 }
 
 export type ChangeId = BrandType<string, '_changeId'>;
@@ -1101,6 +1102,23 @@ export declare interface ServerInfo {
 }
 
 /**
+ * Contains the list of Validation options applicable to a change.
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-config.html#validation-options
+ */
+export declare interface ValidationOptionsInfo {
+  validation_options: ValidationOptionInfo[];
+}
+
+/**
+ * The push options that can be specified by the user on push
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-config.html#validation-option-info
+ */
+export declare interface ValidationOptionInfo {
+  name: string;
+  description: string;
+}
+
+/**
  * The SshdInfo entity contains information about Gerrit configuration from the sshd section.
  * https://gerrit-review.googlesource.com/Documentation/rest-api-config.html#sshd-info
  * This entity doesn’t contain any data, but the presence of this (empty) entity
@@ -1220,6 +1238,7 @@ export declare interface SubmitRequirementExpressionInfo {
   status?: SubmitRequirementExpressionInfoStatus;
   passing_atoms?: string[];
   failing_atoms?: string[];
+  atom_explanations?: {[atom: string]: string};
   error_message?: string;
 }
 
@@ -1346,4 +1365,32 @@ export declare interface FixSuggestionInfo extends FixSuggestionInfoInput {
   description: string;
   replacements: FixReplacementInfo[];
   log_probability?: number;
+}
+
+/**
+ * The LabelDefinitionInfo entity describes a review label.
+ *
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-projects.html#label-definition-info
+ */
+export interface LabelDefinitionInfo {
+  name: string;
+  description?: string;
+  project_name: string;
+  function: LabelDefinitionInfoFunction;
+  values: LabelValueToDescriptionMap;
+  default_value: number;
+  branches?: string[];
+  can_override?: boolean;
+  copy_condition?: string;
+  allow_post_submit?: boolean;
+  ignore_self_approval?: boolean;
+}
+
+export enum LabelDefinitionInfoFunction {
+  MaxWithBlock = 'MaxWithBlock',
+  AnyWithBlock = 'AnyWithBlock',
+  MaxNoBlock = 'MaxNoBlock',
+  NoBlock = 'NoBlock',
+  Noop = 'Noop',
+  PatchSetLock = 'PatchSetLock',
 }

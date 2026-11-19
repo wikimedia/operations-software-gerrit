@@ -21,7 +21,6 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.flogger.FluentLogger;
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.events.LifecycleListener;
 import com.google.gerrit.extensions.registration.DynamicMap;
@@ -34,20 +33,17 @@ import com.google.gerrit.server.config.ConfigUtil;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.ScheduleConfig;
 import com.google.gerrit.server.config.ScheduleConfig.Schedule;
-import com.google.gerrit.server.config.SitePaths;
-import com.google.gerrit.server.git.WorkQueue;
-import com.google.gerrit.server.index.options.BuildBloomFilter;
-import com.google.gerrit.server.index.options.IsFirstInsertForEntry;
-import com.google.gerrit.server.logging.LoggingContextAwareExecutorService;
+import com.google.gerrit.server.util.H2Url;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -60,6 +56,7 @@ import org.eclipse.jgit.lib.Config;
 @Singleton
 class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleListener {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+  private static final int COMPATIBILITY_VERSION = 2;
 
   static class PeriodicCachePruner implements Runnable {
     private final H2CacheImpl<?, ?> cache;
@@ -85,8 +82,7 @@ class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleList
   private final ScheduledExecutorService cleanup;
   private final long h2CacheSize;
   private final boolean h2AutoServer;
-  private final boolean isOfflineReindex;
-  private final boolean buildBloomFilter;
+  private final Set<CacheOptions> options;
   private final boolean pruneOnStartup;
   private final Schedule schedule;
 
@@ -94,12 +90,12 @@ class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleList
   H2CacheFactory(
       MemoryCacheFactory memCacheFactory,
       @GerritServerConfig Config cfg,
-      SitePaths site,
       DynamicMap<Cache<?, ?>> cacheMap,
-      WorkQueue queue,
-      @Nullable IsFirstInsertForEntry isFirstInsertForEntry,
-      @Nullable BuildBloomFilter buildBloomFilter) {
-    super(memCacheFactory, cfg, site);
+      @Nullable @CacheCleanupExecutor ScheduledExecutorService cleanupExecutor,
+      @Nullable @CacheStoreExecutor ExecutorService storeExecutor,
+      @Nullable @CacheDir Path cacheDir,
+      Set<CacheOptions> options) {
+    super(memCacheFactory, cfg, cacheDir);
     h2CacheSize = cfg.getLong("cache", null, "h2CacheSize", -1);
     h2AutoServer = cfg.getBoolean("cache", null, "h2AutoServer", false);
     pruneOnStartup = cfg.getBoolean("cachePruning", null, "pruneOnStartup", true);
@@ -109,22 +105,9 @@ class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleList
             .orElseGet(() -> Schedule.createOrFail(Duration.ofDays(1).toMillis(), "01:00"));
     logger.atInfo().log("Scheduling cache pruning with schedule %s", schedule);
     this.cacheMap = cacheMap;
-    this.isOfflineReindex =
-        isFirstInsertForEntry != null && isFirstInsertForEntry.equals(IsFirstInsertForEntry.YES);
-    this.buildBloomFilter =
-        !(buildBloomFilter != null && buildBloomFilter.equals(BuildBloomFilter.FALSE));
-
-    if (diskEnabled) {
-      executor =
-          new LoggingContextAwareExecutorService(
-              Executors.newFixedThreadPool(
-                  1, new ThreadFactoryBuilder().setNameFormat("DiskCache-Store-%d").build()));
-
-      cleanup = isOfflineReindex ? null : queue.createQueue(1, "DiskCache-Prune", true);
-    } else {
-      executor = null;
-      cleanup = null;
-    }
+    this.executor = storeExecutor;
+    this.cleanup = cleanupExecutor;
+    this.options = options;
   }
 
   @Override
@@ -226,7 +209,13 @@ class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleList
 
   private <V, K> SqlStore<K, V> newSqlStore(PersistentCacheDef<K, V> def, long maxSize) {
     StringBuilder url = new StringBuilder();
-    url.append("jdbc:h2:").append(cacheDir.resolve(def.name()).toUri());
+    url.append(H2Url.ASYNC_PREFIX)
+        .append(
+            cacheDir
+                .resolve(def.name() + "-v" + COMPATIBILITY_VERSION)
+                .toAbsolutePath()
+                .toString()
+                .replace(";", "\\;"));
     if (h2CacheSize >= 0) {
       url.append(";CACHE_SIZE=");
       // H2 CACHE_SIZE is always given in KB
@@ -258,10 +247,11 @@ class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleList
         def.valueSerializer(),
         def.version(),
         maxSize,
+        config.getInt("cache", "h2MaxInvalidated", 25),
         expireAfterWrite,
         refreshAfterWrite,
-        buildBloomFilter,
-        isOfflineReindex);
+        options.contains(CacheOptions.BUILD_BLOOM_FILTER),
+        options.contains(CacheOptions.TRACK_LAST_ACCESS));
   }
 
   private boolean has(String name, String var) {

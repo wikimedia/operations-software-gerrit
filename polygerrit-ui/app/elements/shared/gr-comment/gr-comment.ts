@@ -39,10 +39,10 @@ import {GrConfirmDeleteCommentDialog} from '../gr-confirm-delete-comment-dialog/
 import {
   convertToCommentInput,
   createUserFixSuggestion,
-  getContentInCommentRange,
   getUserSuggestion,
   hasUserSuggestion,
   id,
+  isFileLevelComment,
   NEWLINE_PATTERN,
   USER_SUGGESTION_START_PATTERN,
 } from '../../../utils/comment-util';
@@ -64,40 +64,40 @@ import {CommentSide, SpecialFilePath} from '../../../constants/constants';
 import {Subject} from 'rxjs';
 import {debounceTime} from 'rxjs/operators';
 import {changeModelToken} from '../../../models/change/change-model';
-import {
-  ChangeInfo,
-  FixSuggestionInfo,
-  isBase64FileContent,
-} from '../../../api/rest-api';
+import {FixSuggestionInfo} from '../../../api/rest-api';
 import {createDiffUrl} from '../../../models/views/change';
 import {userModelToken} from '../../../models/user/user-model';
 import {modalStyles} from '../../../styles/gr-modal-styles';
 import {KnownExperimentId} from '../../../services/flags/flags';
-import {pluginLoaderToken} from '../gr-js-api-interface/gr-plugin-loader';
 import {
   CommentModel,
   commentModelToken,
 } from '../gr-comment-model/gr-comment-model';
 import {formStyles} from '../../../styles/form-styles';
-import {Interaction, Timing} from '../../../constants/reporting';
-import {
-  AutocompleteCommentResponse,
-  SuggestionsProvider,
-} from '../../../api/suggestions';
+import {Interaction} from '../../../constants/reporting';
 import {when} from 'lit/directives/when.js';
 import {getDocUrl} from '../../../utils/url-util';
 import {configModelToken} from '../../../models/config/config-model';
 import {getFileExtension} from '../../../utils/file-util';
 import {storageServiceToken} from '../../../services/storage/gr-storage_impl';
 import {deepEqual} from '../../../utils/deep-util';
-import {GrSuggestionDiffPreview} from '../gr-suggestion-diff-preview/gr-suggestion-diff-preview';
-import {noAwait, waitUntil} from '../../../utils/async-util';
+import {
+  GrSuggestionDiffPreview,
+  PreviewLoadedDetail,
+} from '../gr-suggestion-diff-preview/gr-suggestion-diff-preview';
+import {waitUntil} from '../../../utils/async-util';
 import {
   AutocompleteCache,
   AutocompletionContext,
 } from '../../../utils/autocomplete-cache';
 import {HintAppliedEventDetail, HintShownEventDetail} from '../../../api/embed';
 import {levenshteinDistance} from '../../../utils/string-util';
+import {
+  ReportSource,
+  suggestionsServiceToken,
+} from '../../../services/suggestions/suggestions-service';
+import {SuggestionsProvider} from '../../../api/suggestions';
+import {pluginLoaderToken} from '../gr-js-api-interface/gr-plugin-loader';
 
 // visible for testing
 export const AUTO_SAVE_DEBOUNCE_DELAY_MS = 2000;
@@ -112,7 +112,7 @@ declare global {
     'comment-unresolved-changed': ValueChangedEvent<boolean>;
     'comment-text-changed': ValueChangedEvent<string>;
     'comment-anchor-tap': CustomEvent<CommentAnchorTapEventDetail>;
-    'apply-user-suggestion': CustomEvent;
+    'apply-user-suggestion': CustomEvent<ApplyUserSuggestionEventDetail>;
   }
 }
 
@@ -124,6 +124,10 @@ export interface CommentAnchorTapEventDetail {
 export interface CommentEditingChangedDetail {
   editing: boolean;
   path: string;
+}
+
+export interface ApplyUserSuggestionEventDetail {
+  fixSuggestion?: FixSuggestionInfo;
 }
 
 @customElement('gr-comment')
@@ -305,6 +309,11 @@ export class GrComment extends LitElement {
 
   private readonly getStorage = resolve(this, storageServiceToken);
 
+  private readonly getSuggestionsService = resolve(
+    this,
+    suggestionsServiceToken
+  );
+
   private readonly flagsService = getAppContext().flagsService;
 
   private readonly shortcuts = new ShortcutController(this);
@@ -344,11 +353,21 @@ export class GrComment extends LitElement {
   constructor() {
     super();
     provide(this, commentModelToken, () => this.commentModel);
-    // Allow the shortcuts to bubble up so that GrReplyDialog can respond to
-    // them as well.
-    this.shortcuts.addLocal({key: Key.ESC}, () => this.handleEsc(), {
-      preventDefault: false,
-    });
+    this.shortcuts.addLocal(
+      {key: Key.ESC},
+      e => {
+        // We don't stop propagation for patchset comment
+        // (this.permanentEditingMode = true), but we stop it for normal
+        // comments. We don't want ESC to close both the comment and the dialog,
+        // when editing inside the reply dialog.
+        if (!this.permanentEditingMode) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        this.handleEsc();
+      },
+      {preventDefault: false}
+    );
     for (const modifier of [Modifier.CTRL_KEY, Modifier.META_KEY]) {
       this.shortcuts.addLocal(
         {key: Key.ENTER, modifiers: [modifier]},
@@ -373,9 +392,6 @@ export class GrComment extends LitElement {
         this.save();
       });
     }
-    this.addEventListener('apply-user-suggestion', () => {
-      this.handleAppliedFix();
-    });
     this.addEventListener('open-user-suggest-preview', e => {
       this.handleShowFix(e.detail.code);
     });
@@ -459,6 +475,15 @@ export class GrComment extends LitElement {
         }
       }
     );
+    subscribe(
+      this,
+      () => this.getSuggestionsService().suggestionsServiceUpdated$,
+      updated => {
+        if (updated) {
+          this.requestUpdate();
+        }
+      }
+    );
   }
 
   override connectedCallback() {
@@ -508,7 +533,7 @@ export class GrComment extends LitElement {
           padding-bottom: 0px;
         }
         .headerLeft > span {
-          font-weight: var(--font-weight-bold);
+          font-weight: var(--font-weight-medium);
         }
         .headerMiddle {
           color: var(--deemphasized-text-color);
@@ -516,7 +541,7 @@ export class GrComment extends LitElement {
           overflow: hidden;
         }
         .draftTooltip {
-          font-weight: var(--font-weight-bold);
+          font-weight: var(--font-weight-medium);
           display: inline;
         }
         .draftTooltip gr-icon {
@@ -637,7 +662,7 @@ export class GrComment extends LitElement {
           width: 150px;
         }
         .headerLeft gr-account-label::part(gr-account-label-text) {
-          font-weight: var(--font-weight-bold);
+          font-weight: var(--font-weight-medium);
         }
         .draft gr-account-label {
           width: unset;
@@ -1067,7 +1092,9 @@ export class GrComment extends LitElement {
     if (
       !this.editing ||
       this.permanentEditingMode ||
-      this.comment?.path === SpecialFilePath.PATCHSET_LEVEL_COMMENTS
+      !this.comment ||
+      this.comment.path === SpecialFilePath.PATCHSET_LEVEL_COMMENTS ||
+      isFileLevelComment(this.comment)
     ) {
       return nothing;
     }
@@ -1078,7 +1105,7 @@ export class GrComment extends LitElement {
       class="action suggestEdit"
       title="This button copies the text to make a suggestion"
       @click=${this.createSuggestEdit}
-      ><gr-icon icon="edit" id="icon" filled></gr-icon> Suggest edit</gr-button
+      ><gr-icon icon="edit" id="icon" filled></gr-icon> Suggest Edit</gr-button
     >`;
   }
 
@@ -1142,21 +1169,13 @@ export class GrComment extends LitElement {
   // private but used in test
   showGeneratedSuggestion() {
     return (
-      this.suggestionsProvider &&
+      this.getSuggestionsService().isGeneratedSuggestedFixEnabledForComment(
+        this.comment
+      ) &&
       this.editing &&
       !this.permanentEditingMode &&
       this.comment &&
-      this.comment.path &&
-      this.comment.path !== SpecialFilePath.PATCHSET_LEVEL_COMMENTS &&
-      this.comment.path !== SpecialFilePath.COMMIT_MESSAGE &&
-      (!this.suggestionsProvider.supportedFileExtensions ||
-        this.suggestionsProvider.supportedFileExtensions.includes(
-          getFileExtension(this.comment.path)
-        )) &&
-      this.comment === this.comments?.[0] && // Is first comment
-      (this.comment.range || this.comment.line) && // Disabled for File comments
-      !hasUserSuggestion(this.comment) &&
-      this.getChangeModel().getChange()?.is_private !== true
+      this.comment === this.comments?.[0] // Is first comment
     );
   }
 
@@ -1176,22 +1195,13 @@ export class GrComment extends LitElement {
         .fixSuggestionInfo=${this.generatedFixSuggestion}
         .patchSet=${this.comment?.patch_set}
         .commentId=${this.comment?.id}
+        @preview-loaded=${(event: CustomEvent<PreviewLoadedDetail>) =>
+          (this.previewedGeneratedFixSuggestion =
+            event.detail.previewLoadedFor)}
       ></gr-suggestion-diff-preview>`;
     } else {
       return nothing;
     }
-  }
-
-  // visible for testing
-  async waitPreviewForGeneratedSuggestion() {
-    const generatedFixSuggestion = this.generatedFixSuggestion;
-    if (!generatedFixSuggestion) return;
-    await waitUntil(
-      () =>
-        !!this.suggestionDiffPreview?.previewed &&
-        this.suggestionDiffPreview?.previewLoadedFor === generatedFixSuggestion
-    );
-    this.previewedGeneratedFixSuggestion = generatedFixSuggestion;
   }
 
   private renderGenerateSuggestEditButton() {
@@ -1239,7 +1249,7 @@ export class GrComment extends LitElement {
           href=${this.suggestionsProvider?.getDocumentationLink?.() ||
           getDocUrl(
             this.docsBaseUrl,
-            'user-suggest-edits.html$_generate_suggestion'
+            'user-suggest-edits.html#generate_suggestion'
           )}
           target="_blank"
           rel="noopener noreferrer"
@@ -1265,60 +1275,29 @@ export class GrComment extends LitElement {
   }
 
   private async generateSuggestEdit() {
-    const suggestionsProvider = this.suggestionsProvider;
-    const changeInfo = this.getChangeModel().getChange();
     if (
-      !suggestionsProvider?.suggestFix ||
       !this.showGeneratedSuggestion() ||
       !this.generateSuggestion ||
-      !changeInfo ||
-      !this.comment ||
-      !this.comment.patch_set ||
-      !this.comment.path ||
       this.messageText.length === 0
     )
       return;
     this.generatedSuggestionId = uuid();
-    this.reporting.reportInteraction(Interaction.GENERATE_SUGGESTION_REQUEST, {
-      uuid: this.generatedSuggestionId,
-      type: 'suggest-fix',
-      commentId: this.comment.id,
-      fileExtension: getFileExtension(this.comment.path ?? ''),
-    });
     this.suggestionLoading = true;
-    let suggestionResponse;
+    let suggestion: FixSuggestionInfo | undefined;
     try {
-      suggestionResponse = await suggestionsProvider.suggestFix({
-        prompt: this.messageText,
-        changeInfo: changeInfo as ChangeInfo,
-        patchsetNumber: this.comment?.patch_set,
-        filePath: this.comment.path,
-        range: this.comment.range,
-        lineNumber: this.comment.line,
-      });
+      suggestion =
+        await this.getSuggestionsService().generateSuggestedFixForComment(
+          this.comment,
+          this.messageText,
+          this.generatedSuggestionId,
+          ReportSource.FIX_FOR_REVIEWER_COMMENT
+        );
     } finally {
       this.suggestionLoading = false;
     }
 
-    if (!suggestionResponse) return;
-    // TODO(milutin): The suggestionResponse can contain multiple suggestion
-    // options. We pick the first one for now. In future we shouldn't ignore
-    // other suggestions.
-    this.reporting.reportInteraction(Interaction.GENERATE_SUGGESTION_RESPONSE, {
-      uuid: this.generatedSuggestionId,
-      type: 'suggest-fix',
-      commentId: this.comment.id,
-      response: suggestionResponse.responseCode,
-      numSuggestions: suggestionResponse.fix_suggestions.length,
-      fileExtension: getFileExtension(this.comment.path ?? ''),
-      logProbability: suggestionResponse.fix_suggestions?.[0].log_probability,
-    });
-    const suggestion = suggestionResponse.fix_suggestions?.[0];
-    if (!suggestion?.replacements || suggestion.replacements.length === 0) {
-      return;
-    }
+    if (!suggestion) return;
     this.generatedFixSuggestion = suggestion;
-    noAwait(this.waitPreviewForGeneratedSuggestion());
 
     try {
       await waitUntil(() => this.getFixSuggestions() !== undefined);
@@ -1333,41 +1312,20 @@ export class GrComment extends LitElement {
     const enabled = this.flagsService.isEnabled(
       KnownExperimentId.COMMENT_AUTOCOMPLETION
     );
-    const suggestionsProvider = this.suggestionsProvider;
-    const change = this.getChangeModel().getChange();
-    if (
-      !enabled ||
-      !this.autocompleteEnabled ||
-      !suggestionsProvider?.autocompleteComment ||
-      !change ||
-      !this.comment?.patch_set ||
-      !this.comment.path ||
-      this.messageText.length === 0
-    ) {
+    if (!enabled || !this.autocompleteEnabled) {
       return;
     }
     const commentText = this.messageText;
-    this.reporting.time(Timing.COMMENT_COMPLETION);
-    const response = await suggestionsProvider.autocompleteComment({
-      id: id(this.comment),
-      commentText,
-      changeInfo: change as ChangeInfo,
-      patchsetNumber: this.comment?.patch_set,
-      filePath: this.comment.path,
-      range: this.comment.range,
-      lineNumber: this.comment.line,
-    });
-    const elapsed = this.reporting.timeEnd(Timing.COMMENT_COMPLETION);
-    const context = this.createAutocompletionContext(
-      commentText,
-      response,
-      elapsed
+    const context = await this.getSuggestionsService().autocompleteComment(
+      this.comment,
+      this.messageText,
+      this.comments
     );
+    if (!context) return;
     this.reportHintInteraction(
       Interaction.COMMENT_COMPLETION_SUGGESTION_FETCHED,
       {...context, hasDraftChanged: this.messageText !== commentText}
     );
-    if (!response?.completion) return;
     // Note that we are setting the cache value for `commentText` and getting the value
     // for `this.messageText`.
     this.autocompleteCache.set(context);
@@ -1380,28 +1338,6 @@ export class GrComment extends LitElement {
       commentNumber: this.comments?.length ?? 0,
       filePath: this.comment!.path,
       fileExtension: getFileExtension(this.comment!.path ?? ''),
-    };
-  }
-
-  private createAutocompletionContext(
-    draftContent: string,
-    response: AutocompleteCommentResponse,
-    requestDurationMs: number
-  ): AutocompletionContext {
-    const commentCompletion = response.completion ?? '';
-    return {
-      ...this.createAutocompletionBaseContext(),
-
-      draftContent,
-      draftContentLength: draftContent.length,
-      commentCompletion,
-      commentCompletionLength: commentCompletion.length,
-
-      isFullCommentPrediction: draftContent.length === 0,
-      draftInSyncWithSuggestionLength: 0,
-      modelVersion: response.modelVersion ?? '',
-      outcome: response.outcome,
-      requestDurationMs,
     };
   }
 
@@ -1555,9 +1491,15 @@ export class GrComment extends LitElement {
     assert(isDraft(this.comment), 'only drafts are editable');
     if (this.editing) return;
     this.editing = true;
-    // For quickly opening and closing the comment, the suggestion diff preview
-    // might not have time to load and preview.
-    noAwait(this.waitPreviewForGeneratedSuggestion());
+  }
+
+  async addQuote(quote: string) {
+    await waitUntil(
+      () => !!this.textarea,
+      'textarea element not found',
+      5 * 1000
+    );
+    this.messageText = quote + this.messageText;
   }
 
   // TODO: Move this out of gr-comment. gr-comment should not have a comments
@@ -1581,7 +1523,13 @@ export class GrComment extends LitElement {
       assert(!!replacement, 'malformed user suggestion');
       let commentedCode = this.commentedText;
       if (!commentedCode) {
-        commentedCode = await this.getCommentedCode();
+        commentedCode = await this.commentModel.getCommentedCode(
+          this.comment,
+          this.changeNum
+        );
+        if (!commentedCode) {
+          throw new Error('unable to create preview fix event');
+        }
       }
 
       return {
@@ -1703,33 +1651,20 @@ export class GrComment extends LitElement {
 
   async createSuggestEdit(e: MouseEvent) {
     e.stopPropagation();
-    const line = await this.getCommentedCode();
+    const line = await this.commentModel.getCommentedCode(
+      this.comment,
+      this.changeNum
+    );
     const addNewLine = this.messageText.length !== 0;
     this.messageText += `${
       addNewLine ? '\n' : ''
     }${USER_SUGGESTION_START_PATTERN}${line}${'\n```'}`;
   }
 
-  // TODO(milutin): Remove once feature flag is rollout and use only model
-  async getCommentedCode() {
-    assertIsDefined(this.comment, 'comment');
-    assertIsDefined(this.changeNum, 'changeNum');
-    const file = await this.restApiService.getFileContent(
-      this.changeNum,
-      this.comment.path!,
-      this.comment.patch_set!
-    );
-    assert(
-      !!file && isBase64FileContent(file) && !!file.content,
-      'file content for comment not found'
-    );
-    const line = getContentInCommentRange(file.content, this.comment);
-    assert(!!line, 'file content for comment not found');
-    return line;
-  }
-
   // private, but visible for testing
   cancel() {
+    // If permanent editing mode is on, comment can't be cancelled.
+    if (this.permanentEditingMode) return;
     assertIsDefined(this.comment, 'comment');
     assert(isDraft(this.comment), 'only drafts are editable');
     this.messageText = this.originalMessage;

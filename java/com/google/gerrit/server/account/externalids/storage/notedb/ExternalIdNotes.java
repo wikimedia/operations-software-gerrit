@@ -39,8 +39,9 @@ import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.server.account.AccountsUpdate;
 import com.google.gerrit.server.account.externalids.DuplicateExternalIdKeyException;
 import com.google.gerrit.server.account.externalids.ExternalId;
-import com.google.gerrit.server.account.externalids.ExternalIdCache;
 import com.google.gerrit.server.account.externalids.ExternalIdUpsertPreprocessor;
+import com.google.gerrit.server.account.externalids.ExternalIdsSameAccountChecker;
+import com.google.gerrit.server.account.storage.notedb.AccountsUpdateNoteDbImpl;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.config.AuthConfig;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
@@ -100,7 +101,6 @@ public class ExternalIdNotes extends VersionedMetaData {
   private static final int MAX_NOTE_SZ = 1 << 19;
 
   public abstract static class ExternalIdNotesLoader {
-    protected final ExternalIdCache externalIdCache;
     protected final MetricMaker metricMaker;
     protected final AllUsersName allUsersName;
     protected final DynamicMap<ExternalIdUpsertPreprocessor> upsertPreprocessors;
@@ -108,13 +108,11 @@ public class ExternalIdNotes extends VersionedMetaData {
     protected final AuthConfig authConfig;
 
     protected ExternalIdNotesLoader(
-        ExternalIdCache externalIdCache,
         MetricMaker metricMaker,
         AllUsersName allUsersName,
         DynamicMap<ExternalIdUpsertPreprocessor> upsertPreprocessors,
         ExternalIdFactoryNoteDbImpl externalIdFactory,
         AuthConfig authConfig) {
-      this.externalIdCache = externalIdCache;
       this.metricMaker = metricMaker;
       this.allUsersName = allUsersName;
       this.upsertPreprocessors = upsertPreprocessors;
@@ -195,20 +193,13 @@ public class ExternalIdNotes extends VersionedMetaData {
 
     @Inject
     Factory(
-        ExternalIdCache externalIdCache,
         Provider<AccountIndexer> accountIndexer,
         MetricMaker metricMaker,
         AllUsersName allUsersName,
         DynamicMap<ExternalIdUpsertPreprocessor> upsertPreprocessors,
         ExternalIdFactoryNoteDbImpl externalIdFactory,
         AuthConfig authConfig) {
-      super(
-          externalIdCache,
-          metricMaker,
-          allUsersName,
-          upsertPreprocessors,
-          externalIdFactory,
-          authConfig);
+      super(metricMaker, allUsersName, upsertPreprocessors, externalIdFactory, authConfig);
       this.accountIndexer = accountIndexer;
     }
 
@@ -249,19 +240,12 @@ public class ExternalIdNotes extends VersionedMetaData {
 
     @Inject
     FactoryNoReindex(
-        ExternalIdCache externalIdCache,
         MetricMaker metricMaker,
         AllUsersName allUsersName,
         DynamicMap<ExternalIdUpsertPreprocessor> upsertPreprocessors,
         ExternalIdFactoryNoteDbImpl externalIdFactory,
         AuthConfig authConfig) {
-      super(
-          externalIdCache,
-          metricMaker,
-          allUsersName,
-          upsertPreprocessors,
-          externalIdFactory,
-          authConfig);
+      super(metricMaker, allUsersName, upsertPreprocessors, externalIdFactory, authConfig);
     }
 
     @Override
@@ -691,12 +675,6 @@ public class ExternalIdNotes extends VersionedMetaData {
     cacheUpdates.add(cu -> cu.remove(removedExtIds));
   }
 
-  public void replace(
-      Account.Id accountId, Collection<ExternalId.Key> toDelete, Collection<ExternalId> toAdd)
-      throws IOException, DuplicateExternalIdKeyException {
-    replace(accountId, toDelete, toAdd, defaultNoteIdResolver);
-  }
-
   /**
    * Replaces external IDs for an account by external ID keys.
    *
@@ -708,15 +686,23 @@ public class ExternalIdNotes extends VersionedMetaData {
    * @throws IllegalStateException is thrown if any of the specified external IDs does not belong to
    *     the specified account.
    */
-  public void replace(
+  private void replace(
       Account.Id accountId,
       Collection<ExternalId.Key> toDelete,
       Collection<ExternalId> toAdd,
-      Function<ExternalId, ObjectId> noteIdResolver)
+      Function<ExternalId, ObjectId> noteIdResolver,
+      Collection<ExternalId.Key> externalIdsDeletedInTransaction)
       throws IOException, DuplicateExternalIdKeyException {
     checkLoaded();
-    checkSameAccount(toAdd, accountId);
-    checkExternalIdKeysDontExist(ExternalId.Key.from(toAdd), toDelete);
+    Account.Id inferredAccountId = ExternalIdsSameAccountChecker.checkSameAccount(toAdd, accountId);
+    if (inferredAccountId != null && !accountId.equals(inferredAccountId)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "ExternalIdNotes#replace called for account %s, but with external IDs correlated to"
+                  + " account %s",
+              accountId, inferredAccountId));
+    }
+    checkExternalIdKeysDontExist(ExternalId.Key.from(toAdd), externalIdsDeletedInTransaction);
 
     Set<ExternalId> removedExtIds = new HashSet<>();
     Set<ExternalId> updatedExtIds = new HashSet<>();
@@ -797,13 +783,55 @@ public class ExternalIdNotes extends VersionedMetaData {
    */
   public void replace(Collection<ExternalId> toDelete, Collection<ExternalId> toAdd)
       throws IOException, DuplicateExternalIdKeyException {
-    Account.Id accountId = checkSameAccount(Iterables.concat(toDelete, toAdd));
+    Account.Id accountId =
+        ExternalIdsSameAccountChecker.checkSameAccount(Iterables.concat(toDelete, toAdd));
     if (accountId == null) {
       // toDelete and toAdd are empty -> nothing to do
       return;
     }
 
-    replace(accountId, toDelete.stream().map(ExternalId::key).collect(toSet()), toAdd);
+    Set<ExternalId.Key> toDeleteKeys = toDelete.stream().map(ExternalId::key).collect(toSet());
+    replace(accountId, toDelete, toAdd, /* externalIdsDeletedInTransaction= */ toDeleteKeys);
+  }
+
+  /**
+   * Replaces external IDs.
+   *
+   * <p>Deletion of external IDs is done before adding the new external IDs. This means if an
+   * external ID is specified for deletion and an external ID with the same key is specified to be
+   * added, the old external ID with that key is deleted first and then the new external ID is added
+   * (so the external ID for that key is replaced).
+   *
+   * <p>This method also gets a collection of all external IDs that should be deleted in this
+   * transaction - from the target account or other accounts. This collection is taken into account
+   * when calculating duplications.
+   */
+  public void replace(
+      Account.Id accountId,
+      Collection<ExternalId> toDelete,
+      Collection<ExternalId> toAdd,
+      Collection<ExternalId.Key> externalIdsDeletedInTransaction)
+      throws IOException, DuplicateExternalIdKeyException {
+    Account.Id inferredAccountId =
+        ExternalIdsSameAccountChecker.checkSameAccount(Iterables.concat(toDelete, toAdd));
+    if (inferredAccountId != null && !accountId.equals(inferredAccountId)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "ExternalIdNotes#replace called for account %s, but with external IDs correlated to"
+                  + " account %s",
+              accountId, inferredAccountId));
+    }
+    if (toDelete.isEmpty() && toAdd.isEmpty()) {
+      // nothing to do
+      return;
+    }
+
+    replace(
+        accountId,
+        toDelete.stream().map(ExternalId::key).collect(toSet()),
+        toAdd,
+        defaultNoteIdResolver,
+        externalIdsDeletedInTransaction);
   }
 
   /**
@@ -822,14 +850,20 @@ public class ExternalIdNotes extends VersionedMetaData {
       Collection<ExternalId> toAdd,
       Function<ExternalId, ObjectId> noteIdResolver)
       throws IOException, DuplicateExternalIdKeyException {
-    Account.Id accountId = checkSameAccount(Iterables.concat(toDelete, toAdd));
+    Account.Id accountId =
+        ExternalIdsSameAccountChecker.checkSameAccount(Iterables.concat(toDelete, toAdd));
     if (accountId == null) {
       // toDelete and toAdd are empty -> nothing to do
       return;
     }
 
+    Set<ExternalId.Key> toDeleteKeys = toDelete.stream().map(ExternalId::key).collect(toSet());
     replace(
-        accountId, toDelete.stream().map(ExternalId::key).collect(toSet()), toAdd, noteIdResolver);
+        accountId,
+        toDeleteKeys,
+        toAdd,
+        noteIdResolver,
+        /* externalIdsDeletedInTransaction= */ toDeleteKeys);
   }
 
   @Override
@@ -887,39 +921,6 @@ public class ExternalIdNotes extends VersionedMetaData {
       commit.setTreeId(newTreeId);
       return true;
     }
-  }
-
-  /**
-   * Checks that all specified external IDs belong to the same account.
-   *
-   * @return the ID of the account to which all specified external IDs belong.
-   */
-  private static Account.Id checkSameAccount(Iterable<ExternalId> extIds) {
-    return checkSameAccount(extIds, null);
-  }
-
-  /**
-   * Checks that all specified external IDs belong to specified account. If no account is specified
-   * it is checked that all specified external IDs belong to the same account.
-   *
-   * @return the ID of the account to which all specified external IDs belong.
-   */
-  @CanIgnoreReturnValue
-  public static Account.Id checkSameAccount(
-      Iterable<ExternalId> extIds, @Nullable Account.Id accountId) {
-    for (ExternalId extId : extIds) {
-      if (accountId == null) {
-        accountId = extId.accountId();
-        continue;
-      }
-      checkState(
-          accountId.equals(extId.accountId()),
-          "external id %s belongs to account %s, but expected account %s",
-          extId.key().get(),
-          extId.accountId().get(),
-          accountId.get());
-    }
-    return accountId;
   }
 
   private void incrementalDuplicateDetection(Collection<ExternalId> externalIds) {
@@ -1062,7 +1063,7 @@ public class ExternalIdNotes extends VersionedMetaData {
   }
 
   private void preprocessUpsert(ExternalId extId) {
-    upsertPreprocessors.forEach(p -> p.get().upsert(extId));
+    upsertPreprocessors.forEach(p -> p.get().upsert(extId, AccountsUpdateNoteDbImpl.class));
   }
 
   @FunctionalInterface

@@ -46,7 +46,7 @@ import com.google.gerrit.server.validators.ValidationException;
 import com.google.template.soy.data.SanitizedContent;
 import com.google.template.soy.jbcsrc.api.SoySauce;
 import java.net.MalformedURLException;
-import java.net.URL;
+import java.net.URI;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -448,7 +448,7 @@ public final class OutgoingEmail {
     Optional<String> gerritUrl = args.urlFormatter.get().getWebUrl();
     if (gerritUrl.isPresent()) {
       try {
-        return new URL(gerritUrl.get()).getHost();
+        return URI.create(gerritUrl.get()).toURL().getHost();
       } catch (MalformedURLException e) {
         // Try something else.
       }
@@ -710,15 +710,9 @@ public final class OutgoingEmail {
           smtpBccRcptTo.remove(addr);
         }
         switch (rt) {
-          case TO:
-            ((AddressList) headers.get(FieldName.TO)).add(addr);
-            break;
-          case CC:
-            ((AddressList) headers.get(FieldName.CC)).add(addr);
-            break;
-          case BCC:
-            smtpBccRcptTo.add(addr);
-            break;
+          case TO -> ((AddressList) headers.get(FieldName.TO)).add(addr);
+          case CC -> ((AddressList) headers.get(FieldName.CC)).add(addr);
+          case BCC -> smtpBccRcptTo.add(addr);
         }
       }
     }

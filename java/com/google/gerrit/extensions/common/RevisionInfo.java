@@ -28,7 +28,7 @@ public class RevisionInfo {
   public ChangeKind kind;
   public int _number;
 
-  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // TODO(issue-40014498): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
   // Instant
   public Timestamp created;
 
@@ -45,6 +45,15 @@ public class RevisionInfo {
   public PushCertificateInfo pushCertificate;
   public String description;
 
+  /**
+   * Information about conflicts in this revision.
+   *
+   * <p>Only set for revisions that were created by Gerrit as a result of performing a Git merge.
+   *
+   * <p>If this field is not set it's unknown whether the revision contains any file with conflicts.
+   */
+  public ConflictsInfo conflicts;
+
   public RevisionInfo() {}
 
   public RevisionInfo(String ref) {
@@ -60,7 +69,7 @@ public class RevisionInfo {
     this.uploader = uploader;
   }
 
-  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // TODO(issue-40014498): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
   // Instant
   @SuppressWarnings("JdkObsolete")
   public void setCreated(Instant date) {

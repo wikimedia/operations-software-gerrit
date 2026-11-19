@@ -53,6 +53,7 @@ import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.PatchSetUtil;
+import com.google.gerrit.server.ValidationOptionsListener;
 import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.ReviewerModifier.InternalReviewerInput;
 import com.google.gerrit.server.change.ReviewerModifier.ReviewerModification;
@@ -63,6 +64,8 @@ import com.google.gerrit.server.extensions.events.CommentAdded;
 import com.google.gerrit.server.extensions.events.RevisionCreated;
 import com.google.gerrit.server.git.GroupCollector;
 import com.google.gerrit.server.git.validators.CommitValidationException;
+import com.google.gerrit.server.git.validators.CommitValidationInfo;
+import com.google.gerrit.server.git.validators.CommitValidationInfoListener;
 import com.google.gerrit.server.git.validators.CommitValidators;
 import com.google.gerrit.server.git.validators.TopicValidator;
 import com.google.gerrit.server.mail.EmailFactories;
@@ -76,6 +79,7 @@ import com.google.gerrit.server.patch.DiffOperationsForCommitValidation;
 import com.google.gerrit.server.patch.PatchSetInfoFactory;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
+import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.ssh.NoSshInfo;
@@ -127,6 +131,8 @@ public class ChangeInserter implements InsertChangeOp {
   private final AutoMerger autoMerger;
   private final ChangeUtil changeUtil;
   private final DiffOperationsForCommitValidation.Factory diffOperationsForCommitValidationFactory;
+  private final PluginSetContext<ValidationOptionsListener> validationOptionsListeners;
+  private final PluginSetContext<CommitValidationInfoListener> commitValidationInfoListeners;
 
   private final Change.Id changeId;
   private final PatchSet.Id psId;
@@ -137,6 +143,7 @@ public class ChangeInserter implements InsertChangeOp {
   private PatchSet.Id cherryPickOf;
   private Change.Status status;
   private String topic;
+  private PatchSet.Conflicts conflicts;
   private String message;
   private String patchSetDescription;
   private boolean isPrivate;
@@ -145,6 +152,7 @@ public class ChangeInserter implements InsertChangeOp {
   private ImmutableListMultimap<String, String> validationOptions = ImmutableListMultimap.of();
   private ImmutableMap<String, String> customKeyedValues = ImmutableMap.of();
   private boolean validate = true;
+  private ImmutableMap<String, CommitValidationInfo> validationInfos;
   private Map<String, Short> approvals;
   private RequestScopePropagator requestScopePropagator;
   private boolean fireRevisionCreated;
@@ -182,6 +190,8 @@ public class ChangeInserter implements InsertChangeOp {
       AutoMerger autoMerger,
       ChangeUtil changeUtil,
       DiffOperationsForCommitValidation.Factory diffOperationsForCommitValidationFactory,
+      PluginSetContext<ValidationOptionsListener> validationOptionsListeners,
+      PluginSetContext<CommitValidationInfoListener> commitValidationInfoListeners,
       @Assisted Change.Id changeId,
       @Assisted ObjectId commitId,
       @Assisted String refName) {
@@ -202,6 +212,8 @@ public class ChangeInserter implements InsertChangeOp {
     this.autoMerger = autoMerger;
     this.changeUtil = changeUtil;
     this.diffOperationsForCommitValidationFactory = diffOperationsForCommitValidationFactory;
+    this.validationOptionsListeners = validationOptionsListeners;
+    this.commitValidationInfoListeners = commitValidationInfoListeners;
 
     this.changeId = changeId;
     this.psId = PatchSet.id(changeId, INITIAL_PATCH_SET_ID);
@@ -266,6 +278,12 @@ public class ChangeInserter implements InsertChangeOp {
   }
 
   @CanIgnoreReturnValue
+  public ChangeInserter setConflicts(PatchSet.Conflicts conflicts) {
+    this.conflicts = conflicts;
+    return this;
+  }
+
+  @CanIgnoreReturnValue
   public ChangeInserter setCherryPickOf(PatchSet.Id cherryPickOf) {
     this.cherryPickOf = cherryPickOf;
     return this;
@@ -283,9 +301,30 @@ public class ChangeInserter implements InsertChangeOp {
     return this;
   }
 
+  /**
+   * Disables the commit validation because validation is not needed.
+   *
+   * @return the {@link ChangeInserter} instance to allow chaining calls
+   */
   @CanIgnoreReturnValue
-  public ChangeInserter setValidate(boolean validate) {
-    this.validate = validate;
+  public ChangeInserter disableValidation() {
+    return disableValidation(null);
+  }
+
+  /**
+   * Disables the commit validation because the validation has already been done.
+   *
+   * <p>The result from the validation that has already been done needs to be provided to this
+   * method and is being used to invoke the {@link CommitValidationInfoListener}'s.
+   *
+   * @param validationInfos result of validating {@link #commitId}
+   * @return the {@link ChangeInserter} instance to allow chaining calls
+   */
+  @CanIgnoreReturnValue
+  public ChangeInserter disableValidation(
+      @Nullable ImmutableMap<String, CommitValidationInfo> validationInfos) {
+    this.validate = false;
+    this.validationInfos = validationInfos;
     return this;
   }
 
@@ -542,6 +581,11 @@ public class ChangeInserter implements InsertChangeOp {
     if (!approvals.isEmpty()) {
       update.putReviewer(ctx.getAccountId(), REVIEWER);
     }
+
+    if (conflicts != null) {
+      update.setConflicts(conflicts);
+    }
+
     if (message != null) {
       changeMessage =
           cmUtil.setChangeMessage(
@@ -639,23 +683,32 @@ public class ChangeInserter implements InsertChangeOp {
   }
 
   private void validate(RepoContext ctx) throws IOException, ResourceConflictException {
-    if (!validate) {
-      return;
-    }
+    try (CommitReceivedEvent event =
+        new CommitReceivedEvent(
+            cmd,
+            projectState.getProject(),
+            change.getDest().branch(),
+            validationOptions,
+            ctx.getRepoView().getConfig(),
+            ctx.getRevWalk().getObjectReader(),
+            commitId,
+            ctx.getIdentifiedUser(),
+            diffOperationsForCommitValidationFactory.create(
+                ctx.getRepoView(), ctx.getInserter()))) {
+      if (!validate) {
+        if (validationInfos != null) {
+          commitValidationInfoListeners.runEach(
+              commitValidationInfoListener ->
+                  commitValidationInfoListener.commitValidated(validationInfos, event, psId));
+        }
+        return;
+      }
 
-    try {
-      try (CommitReceivedEvent event =
-          new CommitReceivedEvent(
-              cmd,
-              projectState.getProject(),
-              change.getDest().branch(),
-              validationOptions,
-              ctx.getRepoView().getConfig(),
-              ctx.getRevWalk().getObjectReader(),
-              commitId,
-              ctx.getIdentifiedUser(),
-              diffOperationsForCommitValidationFactory.create(
-                  ctx.getRepoView(), ctx.getInserter()))) {
+      try {
+        validationOptionsListeners.runEach(
+            validationOptionsListener ->
+                validationOptionsListener.onPatchSetCreation(
+                    change.getDest(), psId, validationOptions));
         commitValidatorsFactory
             .forGerritCommits(
                 permissionBackend.user(ctx.getUser()).project(ctx.getProject()),
@@ -664,10 +717,11 @@ public class ChangeInserter implements InsertChangeOp {
                 new NoSshInfo(),
                 ctx.getRevWalk(),
                 change)
+            .patchSet(psId)
             .validate(event);
+      } catch (CommitValidationException e) {
+        throw new ResourceConflictException(e.getFullMessage());
       }
-    } catch (CommitValidationException e) {
-      throw new ResourceConflictException(e.getFullMessage());
     }
   }
 

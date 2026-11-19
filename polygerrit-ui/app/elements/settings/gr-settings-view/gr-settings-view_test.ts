@@ -122,7 +122,7 @@ suite('gr-settings-view tests', () => {
               role="button"
               tabindex="-1"
             >
-              Save changes
+              Save Changes
             </gr-button>
             <gr-button
               aria-disabled="false"
@@ -189,7 +189,7 @@ suite('gr-settings-view tests', () => {
               </gr-dialog>
             </dialog>
           </fieldset>
-          <gr-preferences id="preferences"> </gr-preferences>
+          <gr-preferences id="Preferences"> </gr-preferences>
           <h2 id="DiffPreferences">Diff Preferences</h2>
           <fieldset id="diffPreferences">
             <gr-diff-preferences id="diffPrefs"> </gr-diff-preferences>
@@ -200,10 +200,22 @@ suite('gr-settings-view tests', () => {
               role="button"
               tabindex="-1"
             >
-              Save changes
+              Save Changes
             </gr-button>
           </fieldset>
-          <gr-edit-preferences id="EditPreferences"> </gr-edit-preferences>
+          <h2 id="EditPreferences">Edit Preferences</h2>
+          <fieldset id="editPreferences">
+            <gr-edit-preferences id="editPrefs"> </gr-edit-preferences>
+            <gr-button
+              aria-disabled="true"
+              disabled=""
+              id="saveEditPrefs"
+              role="button"
+              tabindex="-1"
+            >
+              Save Changes
+            </gr-button>
+          </fieldset>
           <gr-menu-editor id="Menu"> </gr-menu-editor>
           <h2 id="ChangeTableColumns">Change Table Columns</h2>
           <fieldset id="changeTableColumns">
@@ -215,7 +227,7 @@ suite('gr-settings-view tests', () => {
               role="button"
               tabindex="-1"
             >
-              Save changes
+              Save Changes
             </gr-button>
           </fieldset>
           <h2 id="Notifications">Notifications</h2>
@@ -229,7 +241,7 @@ suite('gr-settings-view tests', () => {
               role="button"
               tabindex="-1"
             >
-              Save changes
+              Save Changes
             </gr-button>
           </fieldset>
           <h2 id="EmailAddresses">Email Addresses</h2>
@@ -241,7 +253,7 @@ suite('gr-settings-view tests', () => {
               role="button"
               tabindex="-1"
             >
-              Save changes
+              Save Changes
             </gr-button>
           </fieldset>
           <fieldset id="newEmail">
@@ -271,7 +283,7 @@ suite('gr-settings-view tests', () => {
               role="button"
               tabindex="-1"
             >
-              Send verification
+              Send Verification
             </gr-button>
           </fieldset>
           <h2 id="Groups">Groups</h2>

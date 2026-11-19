@@ -24,7 +24,6 @@ import com.google.gerrit.entities.GroupReference;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.config.PluginConfig;
 import com.google.gerrit.server.config.PluginConfigFactory;
-import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.project.ProjectCacheImpl;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.inject.name.Named;
@@ -40,8 +39,6 @@ public class ProjectCacheIT extends AbstractDaemonTest {
   @Inject
   @Named(ProjectCacheImpl.CACHE_NAME)
   private LoadingCache<Project.NameKey, Optional<CachedProjectConfig>> inMemoryProjectCache;
-
-  @Inject private SitePaths sitePaths;
 
   @Test
   public void pluginConfig_cachedValueEqualsConfigValue() throws Exception {
@@ -147,12 +144,17 @@ public class ProjectCacheIT extends AbstractDaemonTest {
   public void invalidatesNegativeCachingAfterProjectCreation() throws Exception {
     long initialNumMisses = inMemoryProjectCache.stats().missCount();
     assertThat(inMemoryProjectCache.get(Project.nameKey(name("foo")))).isEmpty();
-    assertThat(inMemoryProjectCache.stats().missCount())
-        .isEqualTo(initialNumMisses + 1); // Negative voting cached
+    long projectNumMisses = initialNumMisses + 1; // current miss count + 1
+    assertThat(inMemoryProjectCache.stats().missCount()).isEqualTo(projectNumMisses);
+
     Project.NameKey newProjectName =
         createProjectOverAPI("foo", allProjects, true, /* submitType= */ null);
-    assertThat(inMemoryProjectCache.get(newProjectName)).isPresent(); // Another invocation
+    long projectCreatedNumMisses = inMemoryProjectCache.stats().missCount();
+    assertThat(projectCreatedNumMisses)
+        .isGreaterThan(projectNumMisses); // eviction happened during the project creation
+
+    assertThat(inMemoryProjectCache.get(newProjectName)).isPresent(); // project available in cache
     assertThat(inMemoryProjectCache.stats().missCount())
-        .isEqualTo(initialNumMisses + 3); // Two eviction happened during the project creation
+        .isEqualTo(projectCreatedNumMisses); // misses no longer increased
   }
 }

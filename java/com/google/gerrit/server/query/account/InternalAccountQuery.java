@@ -19,8 +19,6 @@ import static java.util.stream.Collectors.toSet;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.ArrayListMultimap;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.flogger.FluentLogger;
@@ -28,16 +26,17 @@ import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.index.IndexConfig;
-import com.google.gerrit.index.Schema;
-import com.google.gerrit.index.SchemaFieldDefs.SchemaField;
 import com.google.gerrit.index.query.InternalQuery;
+import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.account.externalids.ExternalIdKeyFactory;
-import com.google.gerrit.server.index.account.AccountField;
+import com.google.gerrit.server.config.AccountConfig;
 import com.google.gerrit.server.index.account.AccountIndexCollection;
 import com.google.inject.Inject;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -49,6 +48,7 @@ import java.util.Set;
 public class InternalAccountQuery extends InternalQuery<AccountState, InternalAccountQuery> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
+  private final AccountConfig accountConfig;
   private final ExternalIdKeyFactory externalIdKeyFactory;
 
   @Inject
@@ -56,8 +56,11 @@ public class InternalAccountQuery extends InternalQuery<AccountState, InternalAc
       AccountQueryProcessor queryProcessor,
       AccountIndexCollection indexes,
       IndexConfig indexConfig,
-      ExternalIdKeyFactory externalIdKeyFactory) {
+      ExternalIdKeyFactory externalIdKeyFactory,
+      AccountConfig accountConfig) {
+
     super(queryProcessor, indexes, indexConfig);
+    this.accountConfig = accountConfig;
     this.externalIdKeyFactory = externalIdKeyFactory;
   }
 
@@ -95,55 +98,42 @@ public class InternalAccountQuery extends InternalQuery<AccountState, InternalAc
   }
 
   /**
-   * Queries for accounts that have a preferred email that exactly matches the given email.
+   * Queries for accounts that have a preferred email that matches the given email.
+   *
+   * <p>The local part of the email is compared either in a case-insensitive or case-sensitive
+   * manner, depending on the configuration parameter {@code accounts.caseInsensitiveLocalPart}.
+   * Check the configuration documentation for more details.
    *
    * @param email preferred email by which accounts should be found
    * @return list of accounts that have a preferred email that exactly matches the given email
    */
   public List<AccountState> byPreferredEmail(String email) {
-    if (hasPreferredEmailExact()) {
-      return query(AccountPredicates.preferredEmailExact(email));
-    }
-
-    if (!hasPreferredEmail()) {
-      return ImmutableList.of();
-    }
-
-    return query(AccountPredicates.preferredEmail(email)).stream()
-        .filter(a -> a.account().preferredEmail().equals(email))
+    return query(getPreferredEmailPredicate(email)).stream()
+        .filter(a -> normalizeEmail(a.account().preferredEmail()).equals(normalizeEmail(email)))
         .collect(toList());
   }
 
   /**
-   * Makes multiple queries for accounts by preferred email (exact match).
+   * Makes multiple queries for accounts by preferred email.
+   *
+   * <p>The local part of the email is compared either in a case-insensitive or case-sensitive
+   * manner, depending on the configuration parameter {@code accounts.caseInsensitiveLocalPart}.
+   * Check the configuration documentation for more details.
    *
    * @param emails preferred emails by which accounts should be found
    * @return multimap of the given emails to accounts that have a preferred email that exactly
    *     matches this email
    */
   public Multimap<String, AccountState> byPreferredEmail(List<String> emails) {
-    if (hasPreferredEmailExact()) {
-      List<List<AccountState>> r =
-          query(emails.stream().map(AccountPredicates::preferredEmailExact).collect(toList()));
-      ListMultimap<String, AccountState> accountsByEmail = ArrayListMultimap.create();
-      for (int i = 0; i < emails.size(); i++) {
-        accountsByEmail.putAll(emails.get(i), r.get(i));
-      }
-      return accountsByEmail;
-    }
-
-    if (!hasPreferredEmail()) {
-      return ImmutableListMultimap.of();
-    }
-
     List<List<AccountState>> r =
-        query(emails.stream().map(AccountPredicates::preferredEmail).collect(toList()));
+        query(emails.stream().map(email -> getPreferredEmailPredicate(email)).collect(toList()));
     ListMultimap<String, AccountState> accountsByEmail = ArrayListMultimap.create();
     for (int i = 0; i < emails.size(); i++) {
       String email = emails.get(i);
       Set<AccountState> matchingAccounts =
           r.get(i).stream()
-              .filter(a -> a.account().preferredEmail().equals(email))
+              .filter(
+                  a -> normalizeEmail(a.account().preferredEmail()).equals(normalizeEmail(email)))
               .collect(toSet());
       accountsByEmail.putAll(email, matchingAccounts);
     }
@@ -154,16 +144,28 @@ public class InternalAccountQuery extends InternalQuery<AccountState, InternalAc
     return query(AccountPredicates.watchedProject(project));
   }
 
-  private boolean hasField(SchemaField<AccountState, ?> field) {
-    Schema<AccountState> s = schema();
-    return (s != null && s.hasField(field));
+  private Predicate<AccountState> getPreferredEmailPredicate(String email) {
+    return useCaseInsensitiveLocalParts(email)
+        ? AccountPredicates.preferredEmail(normalizeEmail(email))
+        : AccountPredicates.preferredEmailExact(email);
   }
 
-  private boolean hasPreferredEmail() {
-    return hasField(AccountField.PREFERRED_EMAIL_LOWER_CASE_SPEC);
+  private String normalizeEmail(String email) {
+    return useCaseInsensitiveLocalParts(email) ? email.toLowerCase(Locale.US) : email;
   }
 
-  private boolean hasPreferredEmailExact() {
-    return hasField(AccountField.PREFERRED_EMAIL_EXACT_SPEC);
+  private boolean useCaseInsensitiveLocalParts(String email) {
+    return Arrays.asList(accountConfig.getCaseInsensitiveLocalParts())
+        .contains(getLowerCaseEmailDomain(email));
+  }
+
+  private String getLowerCaseEmailDomain(String email) {
+    String[] parts = email.split("@", 2);
+    // The caller method byPreferredEmail can be invoked with the local part
+    // of the email only. Handle this case by just returning it.
+    if (parts.length != 2) {
+      return email;
+    }
+    return parts[1].toLowerCase(Locale.US);
   }
 }

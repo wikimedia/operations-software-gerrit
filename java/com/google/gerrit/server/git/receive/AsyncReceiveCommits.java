@@ -36,6 +36,7 @@ import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.metrics.Timer1;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.PublishCommentsOp;
+import com.google.gerrit.server.RequestCounter;
 import com.google.gerrit.server.cache.PerThreadCache;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.config.ConfigUtil;
@@ -48,6 +49,7 @@ import com.google.gerrit.server.git.ProjectRunnable;
 import com.google.gerrit.server.git.TransferConfig;
 import com.google.gerrit.server.git.UsersSelfAdvertiseRefsHook;
 import com.google.gerrit.server.logging.Metadata;
+import com.google.gerrit.server.logging.TraceContext.TraceIdConsumer;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.permissions.ProjectPermission;
@@ -102,7 +104,9 @@ public class AsyncReceiveCommits {
         ProjectState projectState,
         IdentifiedUser user,
         Repository repository,
-        @Nullable MessageSender messageSender);
+        @Nullable TraceIdConsumer traceIdConsumer,
+        @Nullable MessageSender messageSender,
+        @Nullable RequestCounter requestCounter);
   }
 
   public static class AsyncReceiveCommitsModule extends PrivateModule {
@@ -165,7 +169,8 @@ public class AsyncReceiveCommits {
           }
         },
         TaskKind.RECEIVE_COMMITS,
-        "Processing changes");
+        "Processing changes",
+        false);
   }
 
   private enum PushType {
@@ -259,7 +264,9 @@ public class AsyncReceiveCommits {
       @Assisted ProjectState projectState,
       @Assisted IdentifiedUser user,
       @Assisted Repository repo,
-      @Assisted @Nullable MessageSender messageSender)
+      @Assisted @Nullable TraceIdConsumer traceIdConsumer,
+      @Assisted @Nullable MessageSender messageSender,
+      @Assisted @Nullable RequestCounter requestCounter)
       throws PermissionBackendException {
     this.multiProgressMonitorFactory = multiProgressMonitorFactory;
     this.executor = executor;
@@ -301,11 +308,20 @@ public class AsyncReceiveCommits {
             allRefsWatcher,
             usersSelfAdvertiseRefsHook,
             allUsersName,
+            receiveConfig,
             queryProvider,
             projectName,
             user.getAccountId()));
     receiveCommits =
-        factory.create(projectState, user, receivePack, repo, allRefsWatcher, messageSender);
+        factory.create(
+            projectState,
+            user,
+            receivePack,
+            repo,
+            allRefsWatcher,
+            traceIdConsumer,
+            messageSender,
+            requestCounter);
     receiveCommits.init();
     QuotaResponse.Aggregated availableTokens =
         quotaBackend.user(user).project(projectName).availableTokens(REPOSITORY_SIZE_GROUP);

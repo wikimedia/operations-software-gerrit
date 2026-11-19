@@ -29,6 +29,7 @@ import {
   NewDraftInfo,
   isNew,
   CommentInput,
+  CommentRange,
 } from '../types/common';
 import {CommentSide, SpecialFilePath} from '../constants/constants';
 import {parseDate} from './date-util';
@@ -246,13 +247,19 @@ export function createCommentThreads(comments: Comment[]) {
       range: comment.range,
       rootId: id(comment),
     };
-    if (!comment.line && !comment.range) {
+    if (isFileLevelComment(comment)) {
       newThread.line = FILE;
     }
     threads.push(newThread);
     if (id(comment)) idThreadMap[id(comment)] = newThread;
   }
   return threads;
+}
+
+export function rangeId(r: CommentRange) {
+  return `${r.start_line ?? 0}-${r.start_character ?? 0}-${r.end_line ?? 0}-${
+    r.end_character ?? 0
+  }`;
 }
 
 export function equalLocation(t1?: CommentThread, t2?: CommentThread) {
@@ -684,4 +691,8 @@ export function convertToCommentInput(comment: Comment): CommentInput {
     output.fix_suggestions = comment.fix_suggestions;
   }
   return output;
+}
+
+export function isFileLevelComment(comment: Comment) {
+  return !comment.line && !comment.range;
 }

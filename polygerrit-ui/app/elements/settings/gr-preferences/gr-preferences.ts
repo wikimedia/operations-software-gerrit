@@ -427,7 +427,7 @@ export class GrPreferences extends LitElement {
             await this.save();
           }}
           ?disabled=${!this.hasUnsavedChanges()}
-          >Save changes</gr-button
+          >Save Changes</gr-button
         >
       </fieldset>
     `;
@@ -436,8 +436,6 @@ export class GrPreferences extends LitElement {
   // When the experiment is over, move this back to render(),
   // removing this function.
   private renderBrowserNotifications() {
-    if (!this.flagsService.isEnabled(KnownExperimentId.PUSH_NOTIFICATIONS))
-      return nothing;
     if (
       !this.flagsService.isEnabled(
         KnownExperimentId.PUSH_NOTIFICATIONS_DEVELOPER

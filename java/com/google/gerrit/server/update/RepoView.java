@@ -23,6 +23,7 @@ import com.google.gerrit.server.git.GitRepositoryManager;
 import java.io.IOException;
 import java.util.Map;
 import java.util.Optional;
+import org.eclipse.jgit.attributes.AttributesNodeProvider;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
@@ -42,13 +43,14 @@ import org.eclipse.jgit.revwalk.RevWalk;
  * implementations have staged using the write methods on {@link RepoContext}. Callers do not have
  * to worry about whether operations have been performed yet.
  */
-public class RepoView {
+public class RepoView implements AutoCloseable {
   private final Repository repo;
   private final RevWalk rw;
   private final ObjectInserter inserter;
   private final ObjectInserter inserterWrapper;
   private final ChainedReceiveCommands commands;
   private final boolean closeRepo;
+  private AttributesNodeProvider attributesNodeProvider;
 
   RepoView(GitRepositoryManager repoManager, Project.NameKey project) throws IOException {
     repo = repoManager.openRepository(project);
@@ -163,6 +165,20 @@ public class RepoView {
     return result;
   }
 
+  /**
+   * Get the existing or create a new {@link org.eclipse.jgit.attributes.AttributesNodeProvider}.
+   *
+   * @return a new or existing {@link org.eclipse.jgit.attributes.AttributesNodeProvider}. This
+   *     {@link org.eclipse.jgit.attributes.AttributesNodeProvider} is lazy loaded only once for the
+   *     life of this RepoView.
+   */
+  public AttributesNodeProvider getAttributesNodeProvider() {
+    if (attributesNodeProvider == null) {
+      attributesNodeProvider = repo.createAttributesNodeProvider();
+    }
+    return attributesNodeProvider;
+  }
+
   private static Optional<ObjectId> toOptional(ObjectId id) {
     return id.equals(ObjectId.zeroId()) ? Optional.empty() : Optional.of(id);
   }
@@ -180,9 +196,9 @@ public class RepoView {
     }
   }
 
-  // Not AutoCloseable so callers can't improperly close it. Plus it's never managed with a try
-  // block anyway.
-  void close() {
+  @Override
+  public void close() {
+    commands.close();
     if (closeRepo) {
       inserter.close();
       rw.close();
